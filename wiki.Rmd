@@ -1,0 +1,104 @@
+Title Wikipedia page language edits
+========================================================
+```{r}
+setwd( "~/work/learn/analyticsEdge")
+wiki <- read.csv("data/wiki.csv", stringsAsFactors=FALSE)
+wiki$Vandal <- as.factor(wiki$Vandal)
+baseline <- table(wiki$Vandal)
+baseline.response <- names(baseline)[which.max(baseline)]
+baseline.prob <- baseline/sum(baseline)
+baseline.accuracy <- baseline.prob[baseline.response]
+```
+On the way, we will write some utility functions,
+```{r}
+overlap <- function(i, j, dtm=dtmAdded){
+  sum(dtm[i]*dtm[j])
+}
+olmatrix <- function(dtm){
+  M <- dim(dtm)[1]
+  sapply(1:M, function(i) sapply(1:M, function(j) overlap(i,j, dtm=dtm)))
+}
+
+treatedCorpus <- function(docs){
+  corpus <- Corpus(VectorSource(docs))
+  corpus <- tm_map(corpus, tolower)
+  corpus <- tm_map(corpus, removePunctuation)
+  corpus <- tm_map(corpus, removeWords, stopwords("english"))
+  corpus <- tm_map(corpus, stemDocument)
+  corpus
+}
+  
+```
+We need to load packages, using which we can create a corpus of words, and preprocess them
+```{r}
+library(tm)
+library(SnowballC)
+corpusAdded <- Corpus(VectorSource(wiki$Added))
+corpusAdded <- tm_map(corpusAdded, removeWords, stopwords("english"))
+corpusAdded <- tm_map(corpusAdded, stemDocument)
+dtmAdded <- DocumentTermMatrix(corpusAdded)
+sparseAdded <- removeSparseTerms(dtmAdded, 0.997)
+wordsAdded <- as.data.frame(as.matrix(sparseAdded))
+colnames(wordsAdded) <- paste("A", colnames(wordsAdded))
+
+corpusRemoved <- Corpus(VectorSource(wiki$Removed ))
+corpusRemoved <- tm_map(corpusRemoved , removeWords, stopwords("english"))
+corpusRemoved <- tm_map(corpusRemoved , stemDocument)
+dtmRemoved <- DocumentTermMatrix(corpusRemoved )
+sparseRemoved <- removeSparseTerms(dtmRemoved , 0.997)
+wordsRemoved <- as.data.frame(as.matrix(sparseRemoved ))
+colnames(wordsRemoved ) <- paste("R", colnames(wordsRemoved ))
+
+wikiWords <- cbind(wordsAdded, wordsRemoved)
+wikiWords$Vandal <- wiki$Vandal
+```
+The data frame ready, lets learn
+```{r}
+set.seed(123)
+library(caTools)
+splitWiki <- sample.split(wikiWords$Vandal, SplitRatio=0.7)
+trainWiki <- subset(wikiWords, splitWiki==TRUE)
+testWiki <- subset(wikiWords, splitWiki==FALSE)
+table(testWiki$Vandal)
+```
+CART model
+```{r}
+library(rpart)
+library(rpart.plot)
+wikiCART <- rpart(Vandal ~ ., data=trainWiki, method="class")
+predCART <- predict(wikiCART, newdata=testWiki, type="class")
+table(testWiki$Vandal, predCART)
+```
+Using some hypothesis
+```{r}
+wikiWords2 <- wikiWords
+wikiWords2$HTTP <- ifelse(grepl("http", wiki$Added, fixed=TRUE), 1, 0)
+sum(wikiWords2$HTTP)
+trainWiki2 <- subset(wikiWords2, splitWiki==TRUE)
+testWiki2 <- subset(wikiWords2, splitWiki==FALSE)
+wikiCART2 <- rpart(Vandal ~., data=trainWiki2, method="class")
+predCART2 <- predict(wikiCART2, newdata=testWiki2, type="class")
+table(testWiki2$Vandal, predCART2)
+```
+Number of words, added removed, may be
+```{r}
+wikiWords3 <- wikiWords2
+wikiWords3$NumWordsAdded <- rowSums(as.matrix(dtmAdded))
+wikiWords3$NumWordsRemoved <- rowSums(as.matrix(dtmRemoved))
+trainWiki3 <- subset(wikiWords3, splitWiki==TRUE)
+testWiki3 <- subset(wikiWords3, splitWiki==FALSE)
+wikiCART3 <- rpart(Vandal ~., data=trainWiki3, method="class")
+predCART3 <- predict(wikiCART3, newdata=testWiki3, type="class")
+table(testWiki3$Vandal, predCART3)
+```
+Use some of the metadata
+```{r}
+wikiWords4 <- wikiWords3
+wikiWords4$Minor <- wiki$Minor
+wikiWords4$Loggedin <- wiki$Loggedin
+trainWiki4 <- subset(wikiWords4, splitWiki==TRUE)
+testWiki4 <- subset(wikiWords4, splitWiki==FALSE)
+wikiCART4 <- rpart(Vandal ~., data=trainWiki4, method="class")
+predCART4 <- predict(wikiCART4, newdata=testWiki4, type="class")
+table(testWiki4$Vandal, predCART4)
+```

@@ -1,0 +1,55 @@
+Title
+========================================================
+
+```{r}
+trials <- read.csv("data/clinical_trial.csv", stringsAsFactors=FALSE)
+summary(trials)
+str(trials)
+max(nchar(trials$abstract))
+sum(nchar(trials$abstract) == 0)
+library(tm)
+library(SnowballC)
+treatedCorpus <- function(docs){
+  corpus <- Corpus(VectorSource(docs))
+  corpus <- tm_map(corpus, tolower)
+  corpus <- tm_map(corpus, removePunctuation)
+  corpus <- tm_map(corpus, removeWords, stopwords("english"))
+  corpus <- tm_map(corpus, stemDocument)
+  corpus
+}
+corpusTitle <- treatedCorpus(trials$title)
+corpusAbstract <- treatedCorpus(trials$abstract)
+dtmTitle <- DocumentTermMatrix(corpusTitle)
+dtmAbstract <- DocumentTermMatrix(corpusAbstract)
+sparseTitle <- removeSparseTerms(dtmTitle, 0.95)
+sparseAbstract <- removeSparseTerms(dtmAbstract, 0.95)
+titleDF <- as.data.frame(as.matrix(sparseTitle))
+abstractDF <- as.data.frame(as.matrix(sparseAbstract))
+dim(titleDF)
+dim(abstractDF)
+colnames(titleDF) <- paste0("T", colnames(titleDF))
+colnames(abstractDF) <- paste0("A", colnames(abstractDF))
+dtm <- cbind(titleDF, abstractDF)
+dtm$trial <- trials$trial
+dim(dtm)
+```
+Data frame ready, lets learn
+```{r}
+library(caTools)
+set.seed(144)
+splitTrial <- sample.split(dtm$trial, SplitRatio=0.7)
+trainTrial <- subset(dtm, splitTrial==TRUE)
+testTrial <- subset(dtm, splitTrial==FALSE)
+table(trainTrial$trial)
+trialCART <- rpart(trial ~ ., data=trainTrial, method="class")
+prp(trialCART)
+predTrain <- predict(trialCART)
+max(predTrain[,2])
+table(trainTrial$trial, predTrain[, 2] > 0.5)
+predTest <- predict(trialCART, newdata=testTrial)
+table(testTrial$trial, predTest[,2] > 0.5)
+library(ROCR)
+predROCR <- prediction(predTest[,2], testTrial$trial)
+perfROCR <- performance(predROCR, "tpr", "fpr")
+plot(perfROCR, colorize=TRUE)
+performance(predROCR, "auc")@y.values

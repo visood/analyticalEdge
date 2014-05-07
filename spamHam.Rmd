@@ -1,0 +1,122 @@
+Title Spam or Ham
+========================================================
+
+
+```{r}
+emails <- read.csv("data/emails.csv", stringsAsFactors=FALSE)
+library(tm)
+library(SnowballC)
+treatedCorpus <- function(docs){
+  corpus <- Corpus(VectorSource(docs))
+  corpus <- tm_map(corpus, tolower)
+  corpus <- tm_map(corpus, removePunctuation)
+  corpus <- tm_map(corpus, removeWords, stopwords("english"))
+  corpus <- tm_map(corpus, stemDocument)
+  corpus
+}
+corpusText <- treatedCorpus(emails$text)
+dtm <- DocumentTermMatrix(corpusText)
+spdtm <- removeSparseTerms(dtm, 0.95)
+emailsSparse <- as.data.frame(as.matrix(spdtm))
+colnames(emailsSparse) <- make.names(colnames(emailsSparse))
+colnames(emailsSparse)[which.max(colSums(emailsSparse))]
+emailsSparse$spam <- emails$spam
+dim(emailsSparse)
+wordsSparseHam <- colSums(emailsSparse[ emailsSparse$spam == 0, -331])
+wordsSparseHam<- sort(wordsSparseHam, decreasing=TRUE)
+wordsSparseSpam <- colSums(emailsSparse[ emailsSparse$spam == 1, -331])
+wordsSparseSpam<- sort(wordsSparseSpam, decreasing=TRUE)
+```
+Ready, so learn
+```{r}
+emailsSparse$spam = as.factor(emailsSparse$spam)
+library(caTools)
+set.seed(123)
+split <- sample.split(emailsSparse$spam, SplitRatio=0.7)
+train <- subset(emailsSparse, split==TRUE)
+test <- subset(emailsSparse, split==FALSE)
+spamLog <- glm(spam ~ ., data=train, family="binomial")
+spamCART <- rpart(spam ~ ., data=train, method="class")
+library(randomForest)
+set.seed(123)
+spamRF <- randomForest(spam ~ ., data=train)
+predLog <- predict(spamLog, data=train, type="response")
+predCART <- predict(spamCART)
+predRF <- predict(spamRF, type="prob")
+summary(spamLog)
+table(train$spam, predLog > 0.5)
+```
+Now lets test how good the models are
+```{r}
+predLog <- predict(spamLog, newdata=test, type="response")
+predCART <- predict(spamCART, newdata=test)
+predRF <- predict(spamRF, newdata=test, type="prob")
+getACCandAUC <- function(pred, data){
+  predROCR <- prediction(pred, data)
+  perfROCR <- performance(predROCR, "tpr", "fpr")
+  plot(perfROCR, colorize=TRUE)
+  list(confusion=table(data, pred > 0.5), auc=performance(predROCR, "auc")@y.values)
+}
+accuracy <- function(t){
+  (t["0", "FALSE"] + t["1", "TRUE"])/sum(t)
+}
+acaucLog <- getACCandAUC(predLog, test$spam)
+acaucCART <- getACCandAUC(predCART[,2], test$spam)
+acaucRF <- getACCandAUC(predRF[,2], test$spam)
+accuracy(acaucLog$confusion)
+accuracy(acaucCART$confusion)
+accuracy(acaucRF$confusion)
+```
+More developed models
+```{r}
+wordCount = rowSums(as.matrix(dtm))
+hist(wordCount, breaks=40)
+hist(wordCount, breaks=40)
+wc <- sort(wordCount, decreasing=TRUE)
+plot(wc, 1:length(wc), type="l", log="xy")
+hist(log(wc))
+emailsSparse$logWordCount <- log(wordCount)
+boxplot(logWordCount ~ spam, data=emailsSparse)
+```
+lets learn with this additional variable
+```{r}
+train2 <- subset(emailsSparse, split==TRUE)
+test2 <- subset(emailsSparse, split==FALSE)
+spam2CART <- rpart(spam ~ ., data=train2, method="class")
+set.seed(123)
+spam2RF <- randomForest(spam ~ ., data=train2)
+prp(spam2CART)
+pred2CART <- predict(spam2CART, newdata=test2)
+pred2RF <- predict(spam2RF, newdata=test2, type="prob")
+acauc2CART <- getACCandAUC(pred2CART[,2], test$spam)
+acauc2RF <- getACCandAUC(pred2RF[,2], test$spam)
+accuracy(acauc2CART$confusion)
+acauc2CART$auc
+accuracy(acauc2RF$confusion)
+acauc2RF$auc
+```
+Lets use 2grams
+```{r}
+library(RTextTools)
+dtm2gram <- create_matrix(as.character(corpusText), ngramLength=2)
+dim(dtm2gram)
+spdtm2gram <- removeSparseTerms(dtm2gram, 0.95)
+dim(spdtm2gram)
+emailsSparse2gram <- as.data.frame(as.matrix(spdtm2gram))
+colnames(emailsSparse2gram) <- make.names(colnames(emailsSparse2gram))
+emailsCombined <- cbind(emailsSparse, emailsSparse2gram)
+trainCombined <- subset(emailsCombined, split==TRUE)
+testCombined <- subset(emailsCombined, split==FALSE)
+spamCARTcombined <- rpart(spam ~ ., data=trainCombined, method="class")
+set.seed(123)
+spamRFcombined <- randomForest(spam ~ ., data=trainCombined)
+prp(spamCARTcombined, varlen=0)
+predcCART <- predict(spamCARTcombined, newdata=testCombined)
+predcRF <- predict(spamRFcombined, newdata=testCombined, type="prob")
+acauccCART <- getACCandAUC(predcCART[,2], test$spam)
+acauccRF <- getACCandAUC(predcRF[,2], test$spam)
+accuracy(acauccCART$confusion)
+acauccCART$auc
+accuracy(acauccRF$confusion)
+acauccRF$auc
+```

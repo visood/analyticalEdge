@@ -1,0 +1,122 @@
+Title Clustering for recommendations
+========================================================
+```{r}
+movies <- read.table("data/movielens.txt", header=FALSE, sep="|", quote="\"")
+colnames(movies) <- c("ID", "Title", "ReleaseDate", "VideoReleaseDate", "IMDB", "Unknown", "Action", "Adventure", "Animation", "Childrens", "Comedy", "Crime", "Documentary", "Drama", "Fantasy", "Filmnoir", "Horror", "Musical", "Mystery", "Romance", "SciFi", "Thriller", "War", "Western")
+movies$ID <- NULL
+movies$ReleaseDate <- NULL
+movies$VideoReleaseDate <- NULL
+movies$IMDB <- NULL
+movies <- unique(movies)
+```
+Now we can cluster
+```{r}
+distances <- dist(movies[, 2:20], method="euclidean")
+clusterMovies <- hclust(distances, method="ward")
+plot(clusterMovies)
+clusterGroups <- cutree(clusterMovies, k = 10)
+tapply(movies$Action, clusterGroups, mean)
+tapply(movies$Romance, clusterGroups, mean)
+clusterLevel10MeanGenre <- data.frame(t(sapply(2:20, function(i) tapply(movies[, i], clusterGroups, mean))))
+rownames(clusterLevel10MeanGenre) <- colnames(movies)[2:20]
+```
+Now recommend, start with an example
+```{r}
+tit <- "Men in Black (1997)"
+c <- clusterGroups[(1:dim(movies)[1])[movies$Title == tit]]
+cluster2 <- subset(movies, clusterGroups==c)
+```
+##Image segmentation
+```{r}
+flower <- read.csv("data/flower.csv", header=FALSE)
+flowerMatrix <- as.matrix(flower)
+str(flowerMatrix)
+flowerVector <- as.vector(flowerMatrix)
+str(flowerVector)
+distance <- dist(flowerVector, method="euclidean")
+clusterIntensity <- hclust(distance, method="ward")
+plot(clusterIntensity)
+rect.hclust(clusterIntensity, k=3, border="red")
+flowerClusters <- cutree(clusterIntensity, k=3)
+tapply(flowerVector, flowerClusters, mean)
+dim(flowerClusters) <- c(50,50)
+image(flowerClusters, axes=FALSE)
+image(flowerMatrix, axes=FALSE, col=grey(seq(0,1,length=256)))
+```
+Now mri data
+```{r}
+healthy <- read.csv("data/healthy.csv", header=FALSE)
+healthyMatrix <- as.matrix(healthy)
+image(healthyMatrix, col=grey(seq(0,1,length=256)))
+healthyVector <- as.vector(healthyMatrix)
+#kmeans
+k <- 5
+set.seed(1)
+KMC <- kmeans(healthyVector, centers=k, iter.max=1000)
+str(KMC)
+healthyClusters <- KMC$cluster
+KMC$centers
+dim(healthyClusters) <- c(nrow(healthyMatrix), ncol(healthyMatrix))
+image(healthyClusters, axes=FALSE, col=rainbow(k))
+```
+Tumors
+```{r}
+tumor <- read.csv("data/tumor.csv", header=FALSE)
+tumorMatrix <- as.matrix(tumor)
+tumorVector <- as.vector(tumorMatrix)
+install.packages("flexclust")
+library(flexclust)
+KMC.kcca <- as.kcca(KMC, healthyVector)
+tumorClusters <- predict(KMC.kcca, newdata=tumorVector)
+dim(tumorClusters) <- c(nrow(tumorMatrix), ncol(tumorMatrix))
+image(tumorClusters, axes=FALSE, col=rainbow(k))
+```
+
+## Document Clustering
+```{r}
+dailykos <- read.csv("data/dailykos.csv", stringsAsFactors=FALSE)
+distance <- dist(dailykos[, 2:1546], method="euclidean")
+dailykosClustering <- hclust(distance, method="ward")
+plot(dailykosClustering)
+dailykosClusters7 <- cutree(dailykosClustering, k = 7)
+dailykosByCluster <- lapply(1:7, function(i)subset(dailykos, dailykosClusters7 == i))
+sapply(dailykosByCluster, function(c)dim(c)[1])
+lapply(dailykosByCluster, function(c) tail(sort( colMeans(c[-1]))))
+```
+Lets cluster
+```{r}
+set.seed(1000)
+N <- nrow(dailykos)
+KMC <- kmeans(dailykos[, -1],centers=7)
+dailykosKmean7 <- lapply(1:7, function(i) subset(dailykos[,-1], KMC$cluster == i))
+sapply(dailykosKmean7, function(c) dim(c)[1])
+lapply(dailykosKmean7, function(c) tail(sort( colMeans(c[-1]))))
+compareKmeansHclust <- sapply(1:7, function(i) sapply(1:7, function(j) sum(dailykosClusters7 == j & KMC$cluster == i) ))
+```
+
+##Market Segmentation for Airlines
+```{r}
+airlines <- read.csv("data/AirlinesCluster.csv")
+summary(airlines)
+#install.packages("caret")
+library(caret)
+preproc <- preProcess(airlines)
+airlinesNorm <- predict(preproc, airlines)
+apply(airlinesNorm, 2, max)
+apply(airlinesNorm, 2, min)
+distance <- dist(airlinesNorm, method="euclidean")
+airlinesClustering <- hclust(distance, method="ward")
+plot(airlinesClustering)
+airlinesClusters5 <- cutree(airlinesClustering, k=5)
+airlinesByCluster <- lapply(1:7, function(i)subset( airlines, airlinesClusters5 == i))
+numDataPoints <- sapply(airlinesByCluster, nrow)
+clusterMeans <- apply(airlines, 2, function(c) tapply(c, airlinesClusters5, mean))
+```
+kmeans
+```{r}
+set.seed(88)
+N <- nrow(airlines)
+KMC <- kmeans(airlines, centers=5, iter.max=1000)
+airlinesKmeansClusters <- lapply(1:5, function(i) subset(airlines, KMC$cluster == i))
+sapply( airlinesKmeansClusters, nrow)
+kmclusterMeans <- apply(airlines, 2, function(c) tapply(c, KMC$cluster, mean))

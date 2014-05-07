@@ -1,0 +1,33 @@
+---
+title: "visualizationRecit"
+output: html_document
+---
+```{r}
+library(ggplot2)
+intl <- read.csv("data/intl.csv")
+intl <- transform(intl, Region=reorder(Region, -PercentOfIntl))
+str(intl)
+intl$PercentOfIntl <- 100*intl$PercentOfIntl
+ggplot(intl, aes(x=Region, y=PercentOfIntl)) +
+  geom_bar(stat="identity", fill="dark blue") +
+  geom_text(aes(label=PercentOfIntl), vjust=-0.4) + 
+  ylab("Percent of International Students") +
+  theme(axis.title.x=element_blank(), axis.text.x=element_text(angle=45, hjust=1, size=18), axis.text.y=element_text(size=24), axis.title.y = element_text(size=24))
+```
+on a world map
+```{r worldMap}
+library(ggmap)
+intlall <- read.csv("data/intlall.csv", stringsAsFactors=FALSE)
+head(intlall)
+intlall[is.na(intlall)] <- 0
+worldMap <- map_data("world")
+intlall$Citizenship[ intlall$Citizenship == "China (People's Republic Of)"] <-"China"
+worldMap <- merge(worldMap, intlall, by.x="region", by.y="Citizenship")
+worldMap <- worldMap[order(worldMap$group, worldMap$order),]
+ggplot(worldMap, aes(x=long, y=lat, group=group)) + 
+  geom_polygon(aes(fill=Total), color="black") + 
+  coord_map("mercator")
+
+ggplot(worldMap, aes(x=long, y=lat, group=group)) + 
+  geom_polygon(aes(fill=Total), color="black") + 
+  coord_map("ortho", orientation=c(-37, 30, 0))

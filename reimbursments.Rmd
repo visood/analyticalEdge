@@ -1,0 +1,59 @@
+Title
+========================================================
+
+```{r}
+claims <- read.csv("data/reimbursement.csv")
+sum(rowSums(claims[,2:12]) != 0)/nrow(claims)
+range(as.dist(cor(claims[,1:13])))
+hist(claims$reimbursement2009)
+hist(log(claims$reimbursement2009))
+claims$reimbursement2008 <- log(claims$reimbursement2008+1)
+claims$reimbursement2009 <- log(claims$reimbursement2009+1)
+hist(claims$reimbursement2009)
+sum(claims$reimbursement2009 == 0)/nrow(claims)
+```
+Data, ready, lets predict
+```{r}
+set.seed(144)
+split <- sample(1:nrow(claims), size=0.7*nrow(claims))
+train <- claims[split,]
+test <- claims[-split,]
+lm.claims <- lm( reimbursement2009 ~ . , data=train)
+summary(lm.claims)
+lm.pred <- predict(lm.claims, newdata=test)
+sqrt(mean((lm.pred - test$reimbursement2009)^2))
+```
+baseline models
+```{r}
+baseline <- mean(train$reimbursement2009)
+rmseBL <- sqrt( mean( (baseline - test$reimbursement2009)^2))
+rmseSBL <- sqrt( mean( (test$reimbursement2008 - test$reimbursement2009)^2))
+rmseSBL
+```
+cluster
+```{r}
+train.lmt <- train
+train.lmt$reimbursement2009 <- NULL
+test.lmt <- test
+test.lmt$reimbursement2009 <- NULL
+library(caret)
+preproc <- preProcess(train.lmt)
+train.norm <- predict(preproc, train.lmt)
+test.norm <- predict(preproc, test.lmt)
+mean(train.norm$arthritis)
+mean(test.norm$arthritis)
+```
+data ready, lets begin with clusterin
+```{r}
+set.seed(144)
+km <- kmeans(train.norm, centers=3)
+claimsTrainKMCs <- lapply(1:3, function(i) subset(train.norm, km$cluster == i))
+sapply( claimsTrainKMCs, nrow)
+trainKMCMeans <- apply(train.norm, 2, function(c) tapply(c, km$cluster, mean))
+library(flexclust)
+km.kcca <- as.kcca(km, train.norm)
+cluster.train <- predict(km.kcca)
+cluster.test <- predict(km.kcca, newdata=test.norm)
+```
+predict using the clustering
+```{r}
