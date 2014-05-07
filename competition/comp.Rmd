@@ -1,0 +1,930 @@
+Title
+========================================================
+
+##How do we treat categorical variables for a logistic regression?
+R will make contrast variables and work with those. But we could have a different representation. The predictions on these variables will just be the conditioned means of the response. We could pretend that the categorical variable is actually a discretized realization of a continuous variable, and for some other data it could assume any other value. In this case we code the categorical variable as discrete numerical values. We could use a prior assumption to make this code, or just use the conditioned means of the response! Lets consider an example
+```{r}
+
+n <- 0.25
+m <- 0.25
+xfunc <- function(size=1) {
+  sapply(1:size, function(i){
+    u <- runif(n=1)
+    if (u < n)  -1
+    else {
+      if (u < (1-m)) 0
+      else 1
+    }
+  })
+}
+p <- c("-1"=0.,"0"=0.5, "1"=1.)
+yfunc <- function(xs) sapply(xs, function(x)if (runif(n=1) < p[x]) 1 else 0)
+numCode <- c("-1"=-1, "0"=0, "1"=1)
+N <- 10000
+X <- as.factor(xfunc(N))
+Y <- yfunc(as.character(X))
+XY <- data.frame(X=X, Y=Y)
+XY$X <- as.character(XY$X)
+freqs <- sapply(unique(XY$X), function(x) sum( XY$X == x))
+XY$X <- as.factor(XY$X)
+XY$X <-relevel(XY$X, names(which.max(freqs)))
+#XY$X <- relevel(XY$X, "0")
+XY$num <- numCode[ as.character(XY$X)]
+XY.log <- glm( Y ~ X, data=XY, family="binomial")
+XY.num.log <- glm(Y ~ num, data=XY, family="binomial")
+groupMeans <- sapply(c("-1", "0","1"), function(x) mean(XY$Y[ as.character(XY$X) == x]))
+groupSds <- sapply(c("-1", "0","1"), function(x) sd(XY$Y[ as.character(XY$X) == x]))
+nd <- data.frame( X=as.factor(c(-1, 0, 1)), num=c(-1, 0, 1), Y=c(0, 1, 0.5))
+predFac <- predict(XY.log, newdata=nd, type="response")
+predNum <- predict(XY.num.log, newdata=nd, type="response")
+cbind(nd, groupMeans, predFac, predNum, groupSds)
+summary(XY.log)
+summary(XY.num.log)
+```
+The conclusion here is that the logistic model reduces to the conditional means of the levels of the categarical variable X.
+Now let us introduce two categaroical variables as predictors
+```{r}
+allXY <- as.data.frame(do.call("rbind", lapply(c(-1,0,1), function(x) do.call("rbind", lapply(c(-1,0,1), function(y) c(x,y))) )))
+colnames(allXY) <- c("X", "Y")
+allXY <- allXY[order( 3*allXY$X + allXY$Y),]
+predFun <- function(size=1, p) {
+  sapply(1:size, function(i){
+    u <- runif(n=1)
+    if (u < p[1])  -1
+    else {
+      if (u < (1-p[2])) 0
+      else 1
+    }
+  })
+}
+#respFun <- function(xys, p) sapply(xs, function(x)if (runif(n=1) < p[p[,1]==x,2]) 1 else 0)
+respFun <- function(xys, p) apply( xys, 1, function(xy) if( runif(n=1) < p[ p$X==xy[1] & p$Y==xy[2], 3]) 1 else 0 )
+numCode <- c("-1"=-1, "0"=0, "1"=1)
+px <- c(0.25, 0.25)
+py <- c(0.25, 0.25)
+pz <- data.frame(allXY, Z=apply(allXY, 1,  function(r) (sum(r) + 2)/4))
+N <- 10000
+X <- predFun(N, px)
+Y <- predFun(N, py)
+Z <- respFun(data.frame(X=X, Y=Y), pz)
+XYZ <- data.frame(X=as.factor(X), Y=as.factor(Y), Z=Z)
+XYZ$X <- relevel(XYZ$X, names(which.max(table(XYZ$X))))
+XYZ$Y <- relevel(XYZ$Y, names(which.max(table(XYZ$Y))))
+XYZ$nX <- numCode[as.character(XYZ$X)]
+XYZ$nY <- numCode[as.character(XYZ$Y)]
+xyz.log <- glm( Z ~ X + Y, data=XYZ)
+xyz.num.log <- glm(Z ~ nX + nY, data=XYZ)
+summary(xyz.log)
+summary(xyz.num.log)
+nd <- allXY
+nd$X <- as.factor(nd$X)
+nd$Y <- as.factor(nd$Y)
+nd$nX <- numCode[as.character(nd$X)]
+nd$nY <- numCode[as.character(nd$Y)]
+
+predFac <- predict(xyz.log, newdata=nd, type="response")
+predNum <- predict(xyz.num.log, newdata=nd, type="response")
+
+groupMeans <- apply(allXY, 1, function(r) mean( XYZ$Z[ as.character(XYZ$X) == r[1] & as.character(XYZ$Y) == r[2]]))
+groupSds <- apply(allXY, 1, function(r) sd( XYZ$Z[ as.character(XYZ$X) == r[1] & as.character(XYZ$Y) == r[2]]))
+#cbind(ndXY, predFac, predNum, groupMeans, groupSds)
+```
+Once again we find that the logistic model will just reproduce the observed group means. We could use the logistic model because the group means would fit one. Will this always be the case?
+### Will a system with categorical predictors, and binary response always fit to a logistic?
+Consider a binary categorical predictor. If the two group means are well separated, the logistic model will work. In fact, this is what the logistic model is trying to do. Think of the logistic model as essentially a linear disriminant model. For continuous variables we assume Gaussian distributions around two means that would correspond to the two response values. 
+
+
+## Data Massaging
+Lets read the data in, and make a train and test set
+```{r}
+comp <- read.csv("train.csv")
+questions <- colnames(comp)[9:109]
+library(caTools)
+split <- sample.split( comp$Happy, SplitRatio = 0.7)
+compTrain <- subset(comp, split==TRUE)
+compTest <- subset(comp, split==FALSE)
+```
+
+Lets first look at the group  means for each question
+```{r}
+computeGroupMeanByLevel <- function(q, compdf){
+  sapply(levels( compdf[ , q]), function(l) mean( compdf[ compdf[, q] == l, "Happy"]) )
+}
+        
+groupMeans <- data.frame(do.call("rbind", lapply(questions, function(q) computeGroupMeanByLevel(q, compTrain))))
+rownames(groupMeans) <- questions
+colnames(groupMeans) <- c("blank", "No", "Yes")
+hb <- hist(groupMeans$blank, plot=FALSE)
+hn <- hist(groupMeans$No, plot=FALSE)
+hp <- hist(groupMeans$Yes, plot=FALSE)
+plot(hb, freq=FALSE, border="green", xlim=c(0.4, 0.7), main="Histogram of the three responses", xlab="group means")
+lines(hn, freq=FALSE, border="blue")
+lines(hp, freq=FALSE, border="red")
+```
+If we do not sort the non-blank reponses, we cannot determine which reponse is correlated with happiness. We could choose the questions that lie on the left and right tails of the above histogram, and work with those questions.
+
+We should determine if the yes or no on a question should be positive or negative towards happiness. This is a subjective prior on the nature of the response, but will not influence the data analysis in anyway. We proceed by making a numerical code for each question, and we will also tag each question.
+```{r natureOfTheQuestions}
+qidx <- read.csv("questions.csv", stringsAsFactors=FALSE)$Index
+#names(questions) <- qidx
+qs <- read.csv("questions.csv", stringsAsFactors=FALSE)$Question
+qs <- gsub(pattern="/", replacement=" ", qs)
+qs <- gsub(pattern="-", replacement=" ", qs)
+library(tm)
+library(SnowballC)
+corpus <- Corpus(VectorSource(qs))
+corpus <- tm_map(corpus, tolower)
+corpus <- tm_map(corpus, removePunctuation)
+corpus <- tm_map(corpus, removeWords, stopwords("english") ) 
+capFirstLetter <- function(x) paste(toupper(substring(x, 1,1)), substring(x, 2), sep="")
+
+qlists <- lapply(corpus, function(x) Filter(function(s) s != "", unlist(strsplit(x, " ", fixed=TRUE))))
+qsAbrv <- unlist(lapply(qlists, function(xs) paste(Map(capFirstLetter, xs), collapse = "") ))
+
+```
+Now lets abbreviate the answers
+```{r questionAnswers}
+choices <- read.csv("questions.csv", stringsAsFactors=FALSE)$Choices
+choices <- data.frame(do.call("rbind", lapply(strsplit(x=choices, split="/"), function(xs)sapply(xs, function(x)  gsub(pattern=" ", replacement="", x)))))
+choices <- t(apply(choices, 1, function(r) c("blank", r)))
+colnames(choices) <- c("A0", "A1", "A2")
+qs <- as.matrix(cbind( qsAbrv, choices))
+rownames(qs) <- qidx
+colnames(qs) <- c("Q", "A0", "A1", "A2")
+
+#reorder the rows of qs to confirm to the order in the columns of comp dfs
+qs <- qs[questions, ]
+
+toset <- apply(qs, 1, function(r) (r[2] != "Yes") | (r[3] != "No"))
+torev <- c(7, 8, 9, 10, 11, 13, 14, 16, 18, 20, 22, 25, 26, 27, 29, 33, 35, 36, 37, 41, 42, 43, 45, 48, 49, 50, 54, 56, 57, 59, 60, 61, 64, 66, 68, 69, 70, 74, 77, 78, 79, 80, 84, 86, 88, 91, 92, 94, 97, 98, 100, 101  )
+
+numCode <- cbind(rep(0, 101), rep(1, 101), rep(-1, 101))
+for(i in torev){
+  numCode[i,2] <- -1
+  numCode[i,3] <- 1
+}
+rownames(numCode) <- qidx
+colnames(numCode) <- c("A0n", "A1n", "A2n")
+qsans <- data.frame(qs, numCode)
+```
+Lets numericize the answers
+```{r numericAnswers}
+makeNum <- function(q, xs) {
+  sapply(xs, function(x){
+    if (x=="") 0
+    else {
+      if( gsub(pattern=" ", replacement="", x) == qsans[q, "A1"]) qsans[q, "A1n"]
+      else qsans[q, "A2n"]
+    }
+  })
+}
+
+compTrainNum <- compTrain
+compTestNum <- compTest
+for( q in questions){
+  compTrainNum[,q] <- makeNum(q, compTrainNum[,q])
+  compTestNum[,q] <- makeNum(q, compTestNum[,q])
+}
+```
+So we have the answers to the questions as numerics.
+Lets do the histograms again.
+```{r numhistos}
+computeGroupMeanNum <- function(q, compNum){
+  sapply( c(-1, 0, 1), function(x) mean( compNum[ compNum[, q] == x, "Happy"]) )
+}
+computeGroupSdNum <- function(q, compNum){
+  sapply( c(-1, 0, 1), function(x) sd( compNum[ compNum[, q] == x, "Happy"]) )
+}
+groupMeansNum <- data.frame(do.call("rbind", lapply(questions, function(q) computeGroupMeanNum(q, compTrainNum))))
+rownames(groupMeansNum) <- questions
+colnames(groupMeansNum) <- c("Down", "Flat", "Up")
+groupSdsNum <- data.frame(do.call("rbind", lapply(questions, function(q) computeGroupSdNum(q, compTrainNum))))
+rownames(groupSdsNum) <- questions
+colnames(groupSdsNum) <- c("Down", "Flat", "Up")
+hd <- hist(groupMeansNum$Down, plot=FALSE)
+hf <- hist(groupMeansNum$Flat, plot=FALSE)
+hu <- hist(groupMeansNum$Up, plot=FALSE)
+
+plot(hd, freq=FALSE, border="blue", xlim=c(0.4, 0.7), ylim=c(0,50), main="Histogram of group means", xlab="group means")
+lines(hf, freq=FALSE, border="green")
+lines(hu, freq=FALSE, border="red")
+legend("topleft", legend=c("down", "flat", "up"), col=c("blue", "green", "red"), lty=1, cex=2)
+
+hdl <- hist(log(groupMeansNum$Down), plot=FALSE)
+hfl <- hist(log(groupMeansNum$Flat), plot=FALSE)
+hul <- hist(log(groupMeansNum$Up), plot=FALSE)
+plot(hdl, freq=FALSE, border="blue", xlim=c(-1,-0.3), ylim=c(0,25), main="Histogram of log group means", xlab = "log of group means")
+lines(hfl, freq=FALSE, border="green")
+lines(hul, freq=FALSE, border="red")
+legend("topleft", legend=c("down", "flat", "up"), col=c("blue", "green", "red"), lty=1, cex=2)
+```
+We can filter the questions by their t-values. Notice one thing, the extreme positive changers have changed since last time. The extreme changers we saw earlier are now sitting in the test set. Care is thus necessary to pick up the relevant questions.
+
+
+```{r}
+N <- nrow(compTrainNum)
+groupTs <- sqrt(N)*(groupMeansNum - colMeans(groupMeansNum, na.rm=TRUE))/groupSdsNum
+groupStats <- cbind(groupMeans, groupSdsNum, groupTs)
+hdt <- hist(groupTs$Down, plot=FALSE)
+hft <- hist(groupTs$Flat, plot=FALSE)
+hut <- hist(groupTs$Up, plot=FALSE)
+plot(hdt, border="blue", ylim=c(0, 0.12), xlim=c(-25, 15), freq=FALSE, main="Histogram of t-statistics of group means", xlab="t-statistics of group means")
+lines(hft, border="green", freq=FALSE)
+lines(hut, border="red", freq=FALSE)
+legend("topleft", legend=c("down", "flat", "up"), col=c("blue", "green", "red"), lty=1, cex=2)
+
+sigQsStats.num <- groupStats[ groupTs$Up > 10 | groupTs$Down < -10,]
+sigQidx.num <- rownames(sigQsStats.num)
+```
+We now have a list of relevant questions after numericizing the answers. Lets use a different method, and then we can compare the results.
+
+### Using group means for each question's levels to determine which choice is negative, which neutral, which positive.
+However, we can choose the questions using a different methodology, working directly with the levels, and using the data to determine the downs/flats/ups for each quesiton.
+```{r}
+qlevels <- t(sapply(questions, function(q) levels(compTrain[,q])))
+qlevels[,1] <- "blank"
+rownames(qlevels) <- questions
+qlevels.list <- lapply(questions, function(q) {ls <- levels(compTrain[,q]);  ls[1] <- "blank"; ls})
+qlevels.list <- lapply(qlevels.list, function(ls) { ll <- 1:3; names(ll) <- ls; ll})
+names(qlevels.list) <- questions
+computeGroupMeanByLevel <- function(q, comp){
+  sapply(levels( comp[ , q]), 
+         function(l) {
+           s <- sum( comp$Happy[ comp[, q] == l])
+           n <- sum(comp[,q]==l)
+           if (s==0) 0 else (s/n)
+        }
+  )
+}
+computeGroupSdByLevel <- function(q, comp){
+  sapply(levels( comp[ , q]), 
+         function(l) {
+           s <- sum( comp$Happy[ comp[, q] == l])
+           if (s==0) 0 else sd( comp$Happy[comp[,q] == l])
+        }
+  )
+}
+computeGroupSizesByLevel<- function(q, comp){
+  sapply(levels( comp[ , q]), function(l) sum( comp[,q] == l))
+}
+        
+groupMeans <- data.frame(do.call("rbind", lapply(questions, function(q) computeGroupMeanByLevel(q, compTrain))))
+groupSizes <- data.frame(do.call("rbind", lapply(questions, function(q) computeGroupSizesByLevel(q, compTrain))))
+groupSds <- data.frame(do.call("rbind", lapply(questions, function(q) computeGroupSdByLevel(q, compTrain))))
+rownames(groupMeans) <- questions
+rownames(groupSizes) <- questions
+```
+
+make some plots
+```{r}
+makeGroupMeanSDPlot <- function(i, gm, gs, fromLevels=FALSE){
+  m <- as.numeric(gm[i,])
+  s <- as.numeric(gs[i,])
+  ylim <- c(min(m - s) - 0.10, max(m + s) + 0.1)
+  xlim <- c(min(m) - 0.05, max(m) + 0.05)
+  plot(m, m , col=c("red", "green", "blue"), ylim=ylim, xlim=xlim, cex=2, pch=19, main= qs[i, 1])
+  points(m, m - s, col=c("red", "green", "blue"))
+  points(m, m + s, col=c("red", "green", "blue"))
+  abline(h=(m-s), col=c("red", "green", "blue"), lty=1)
+  abline(h=m, col=c("red", "green", "blue"), lty=1, lwd=2)
+  abline(h=(m+s), col=c("red", "green", "blue", lty=1))
+  if (fromLevels){
+    text(x = m,  y = m - 0.01, labels=qlevels[i,], col=c("red", "green", "blue"))
+  }
+  else text(x=m, y=m-0.01, labels=c("Down", "Flat", "Up"), col=c("red", "green", "blue") )
+  print("energies")
+  #print(paste(questionEnergyLevels(i, gm)))
+  questionEnergyLevels(i, gm)
+}
+discrimination <- function(i, gm, gs){
+  m <- as.numeric(gm[i,])
+  s <- as.numeric(gs[i,])
+  ord <- order(m)
+  m <- m[ord]
+  s <- s[ord]
+  d <- c( m[2] - s[2] - m[1] - s[1], m[3] - s[3] - m[2] -s[2])
+  names(d) <- as.character(qlevels[i, ord][c(1,3)])
+  d
+}
+happyMean <- mean(compTrain$Happy)
+questionEnergyLevels <- function(q, gm){
+  m <- as.numeric(gm[q,])
+  -log(m/(1-m)) + log(happyMean/(1-happyMean))
+}
+  
+  
+groupMeanSds <- sqrt(2*groupMeans/groupSizes)
+sigQs <- questions[ds[,1] > 0 & ds[,2] > 0]
+
+
+energyFromMean <- function(m, hmean=happyMean) -log(m/(1-m)) + log(hmean/(1-hmean))
+computeGroupEnergyByLevel <- function(q, comp){
+  sapply(levels( comp[, q]), function(l) meanEnergy( mean(comp[comp[,q]])))
+}
+groupEnergies <- t(apply(groupMeans, 1, energyFromMean))
+qlevel.list <- lapply( qlevels, function(ls) 1:3)
+totalEnergy0 <- function(anss){ # anss should bea  named list with questions as names
+  n <- length(anss)
+  qns <- names(anss)
+  qls <- qlevels.list[qns]
+  js <- as.numeric( sapply(1:n, function(i) qls[[i]][anss[i]]))
+  #sapply(1:n, function(i) groupEnergies[qns[i], js[i]])
+  mean(diag(groupEnergies[qns, js]))
+}
+
+#i did not realize that invoking as.numeric on factor data will return the factor levels! this makes our life simpler
+totalEnergy <- function(anss, ge=groupEnergies, hhe = NULL, hmean = happyMean){ #anss is a vector of factor variables
+  qns <- intersect(names(anss), questions)
+  levs <- as.numeric(anss[qns])
+  if(is.null(hhe))  sum(diag(ge[qns, levs])) - log(hmean/(1-hmean))
+  else   sum(diag(ge[qns, levs]))  +  hhe[as.numeric(anss$HouseholdStatus)] - log(hmean/(1-hmean)) 
+
+}
+meanEnergy <- function(anss, ge=groupEnergies){ #anss is a vector of factor variables
+  totalEnergy(anss, ge=ge)/length(anss)
+}
+  
+```
+
+We can order the choices for a question by their group means! Thus obtaining a numerical code from the data, and then see how well we did when we ordered the responses subjectively.
+```{r numByLevel}
+numCodeByLevelsList<- lapply(questions, function(q){
+  m <- as.numeric(groupMeans[q,])
+  ord <- order(m)
+  code0 <- c(-1, 0, 1)
+  code <- code0[ord]
+  names(code) <- c("blank", levels(compTrain[,q])[c(2,3)])
+  code
+})
+names(numCodeByLevelsList) <- questions
+numCodeByLevels <- as.matrix(do.call("rbind", numCodeByLevelsList))
+qsansByLevel <- data.frame(qs, numCodeByLevels)
+colnames(qsansByLevel) <- c("Q", "L0", "L1", "L2", "L0n", "L1n", "L2n")
+
+numOrd <- t(apply(groupMeans,1,  order))
+groupMeansLevNum <- data.frame(t(sapply(1:101, function(i) as.numeric(groupMeans[i, numOrd[i,]]))))
+groupSizesLevNum <-  data.frame(t(sapply(1:101, function(i) as.numeric(groupSizes[i, numOrd[i,]]))))
+colnames(groupMeansLevNum) <- c("Down", "Flat", "Up")
+colnames(groupSizesLevNum) <- c("Down", "Flat", "Up")
+rownames(groupMeansLevNum) <- rownames(groupMeans)
+rownames(groupSizesLevNum) <- rownames(groupSizes)
+groupMeanSdsLevNum <- sqrt(2*groupMeansLevNum/groupSizesLevNum)
+groupMeansLevNum.withOrdering <- data.frame(groupMeansLevNum, qsansByLevel[, -1])
+
+makeNum <- function(anss){
+  qanss <- names(anss)
+  as.numeric(
+    sapply(1:length(anss), function(i){ 
+       q <- qanss[i]
+        a <- as.character(anss[[i]])
+        if(a=="") a <- "blank"
+        numCodeByLevelsList[[q]][a]
+      }
+      )
+ )
+}
+
+compTrainNumQs <- data.frame(t(apply(compTrain[, 9:109], 1, makeNum)))
+colnames(compTrainNumQs) <- questions
+compTrainNum <- data.frame( compTrain[, 1:8], compTrainNumQs, compTrain[,110])
+colnames(compTrainNum) <- colnames(compTrain[, 1:110])
+rownames(compTrainNum) <- rownames(compTrain)
+
+compTestNumQs <- data.frame(t(apply(compTest[, 9:109], 1, makeNum)))
+colnames(compTestNumQs) <- questions
+compTestNum <- data.frame( compTest[, 1:8], compTestNumQs, compTest[,110])
+colnames(compTestNum) <- colnames(compTest[, 1:110])
+rownames(compTestNum) <- rownames(compTest)
+
+compDataNumQs <- data.frame(t(apply(compData[, 9:109], 1, makeNum)))
+colnames(compDataNumQs) <- questions
+compDataNum <- data.frame( compData[, 1:8], compDataNumQs, compData[,110])
+colnames(compDataNum) <- colnames(compData[, 1:110])
+rownames(compDataNum) <- rownames(compData)
+```
+We now have data-defined numerical order on the levels, and group means accordingly sorted.
+We can compute and plot the histograms again.
+```{r}
+hd <- hist(as.numeric(groupMeansLevNum$Down), plot=FALSE)
+hf <- hist(as.numeric(groupMeansLevNum$Flat), plot=FALSE)
+hu <- hist(as.numeric(groupMeansLevNum$Up), plot=FALSE)
+plot(hd, freq=FALSE, border="blue", xlim=c(0.4, 0.7), ylim=c(0,60), main="Histogram of group means", xlab="group means")
+lines(hf, freq=FALSE, border="green")
+lines(hu, freq=FALSE, border="red")
+legend("topleft", legend=c("down", "flat", "up"), col=c("blue", "green", "red"), lty=1, cex=2)
+```
+
+## Energy analysis
+Before we plunge into predicting, lets see what the energy levels for each question tell us about the data we have
+```{r}
+q.ord <- data.frame(t(apply(groupEnergies, 1, order)))
+ge.ord <- data.frame(t(apply(groupEnergies, 1, sort)))
+ge.ord <- ge.ord[order(ge.ord[,3]),]
+plot(ge.ord[,1], ylim = c(-0.6, 0.6), col="blue", main="energy levels for questions ordered by largest energy", ylab="energy")
+points(ge.ord[,2], ylim = c(-0.6, 0.6), col="green")
+points(ge.ord[,3], ylim = c(-0.6, 0.6), col="red")
+
+ge.ord <- ge.ord[order(ge.ord[,1], decreasing = TRUE),]
+plot(ge.ord[,1], ylim = c(-0.6, 0.6), col="blue", main="energy levels for questions ordered by lowest energy", ylab="energy")
+points(ge.ord[,2], ylim = c(-0.6, 0.6), col="green")
+points(ge.ord[,3], ylim = c(-0.6, 0.6), col="red")
+
+ge.ord <- ge.ord[ order(ge.ord[,3] - ge.ord[,1]), ]
+plot(ge.ord[,1], ylim = c(-0.6, 0.6), col="blue", main="energy levels for questions ordered by max - min", ylab="energy", cex=3)
+points(ge.ord[,2], ylim = c(-0.6, 0.6), col="green", cex=3)
+points(ge.ord[,3], ylim = c(-0.6, 0.6), col="red", cex=3)
+text(x=1:nrow(ge.ord), y=ge.ord[,1], labels=(1:nrow(ge.ord)), col="blue", cex = 0.8)
+text(x=1:nrow(ge.ord), y=ge.ord[,2], labels=(1:nrow(ge.ord)), col="green", cex = 0.8)
+text(x=1:nrow(ge.ord), y=ge.ord[,3], labels=(1:nrow(ge.ord)), col="red", cex = 0.8)
+
+#groupSizes
+
+gs.ord <-  t(sapply(1:nrow(groupSizes), function(i) groupSizes[i, as.numeric(q.ord[i,])]))
+gs.ord <- data.frame(unlist(gs.ord[,1]), unlist(gs.ord[,2]), unlist(gs.ord[,3]))
+gs.ord <- gs.ord[order(ge.ord[,3] - ge.ord[,1]),]
+plot(gs.ord[,1], ylim = c(100, 2200), col="blue", main="energy levels for questions ordered by max - min", ylab="energy", cex=3)
+points(gs.ord[,2],  col="green", cex=3)
+points(gs.ord[,3],  col="red", cex=3)
+text(x=1:nrow(gs.ord), y=gs.ord[,1], labels=(1:nrow(gs.ord)), col="blue", cex = 0.8)
+text(x=1:nrow(gs.ord), y=gs.ord[,2], labels=(1:nrow(gs.ord)), col="green", cex = 0.8)
+text(x=1:nrow(gs.ord), y=gs.ord[,3], labels=(1:nrow(gs.ord)), col="red", cex = 0.8)
+
+gsds.ord <-  t(sapply(1:nrow(groupMeanSds), function(i) groupMeanSds[i, as.numeric(q.ord[i,])]))
+gsds.ord <- data.frame(unlist(gsds.ord[,1]), unlist(gsds.ord[,2]), unlist(gsds.ord[,3]))
+gsds.ord <- gsds.ord[order(ge.ord[,3] - ge.ord[,1]),]
+plot(gsds.ord[,1], ylim = c(0.02, 0.09), col="blue", main="energy levels for questions ordered by max - min", ylab="energy", cex=3)
+points(gsds.ord[,2],  col="green", cex=3)
+points(gsds.ord[,3],  col="red", cex=3)
+text(x=1:nrow(gsds.ord), y=gsds.ord[,1], labels=(1:nrow(gsds.ord)), col="blue", cex = 0.8)
+text(x=1:nrow(gsds.ord), y=gsds.ord[,2], labels=(1:nrow(gsds.ord)), col="green", cex = 0.8)
+text(x=1:nrow(gsds.ord), y=gsds.ord[,3], labels=(1:nrow(gsds.ord)), col="red", cex = 0.8)
+```
+###Predictions Using Energies
+```{r}
+train.happy <- compTrain$Happy
+test.happy <- compTest$Happy
+qds <- Filter( function(q){ dq <- discrimination(q, groupMeans, groupMeanSds); dq[1] > 0 & dq[2] > 0}, questions)
+qdsDscrm <- t(sapply(qds, function(q)discrimination(q, groupMeans, groupMeanSds)))
+qds <- qds[order(qdsDscrm[,2])]
+qsDscrm <- t(sapply(questions, function(q)discrimination(q, groupMeans, groupMeanSds)))
+questions.dscrmOrdered <- questions[order(qsDscrm[,2])]
+probFromEnergy <- function(e) 1/(1+exp(e))
+makeTableForQs <- function(qs, comp){
+    es <- sapply(1:nrow(comp), function(i) totalEnergy(comp[i, qs]))
+    tb <- table(comp$Happy, probFromEnergy(es) > 0.5)
+    print( paste("accuracy", sum(diag(tb))/sum(tb)))
+    tb
+}
+accuracyForQs <- function(qs, comp){
+  es <- sapply(1:nrow(comp), function(i) totalEnergy(comp[i, qs]))
+  tb <- table(comp$Happy, probFromEnergy(es) > 0.5)
+  sum(diag(tb))/sum(tb)
+}
+```
+We can also use the order on questions defined by the max/min level energies for each questions.
+```{r}
+library(Biobase)
+questions.deltaEnergyOrdered <- questions[order(rowMax(groupEnergies) - rowMin(groupEnergies))]
+qdeo <- questions.deltaEnergyOrdered
+nqs <- seq(80,101, 1)
+aqs.train <- sapply(nqs, function(n) accuracyForQs(qdeo[n:101], compTrain))
+aqs.test <- sapply(nqs, function(n) accuracyForQs(qdeo[n:101], compTest))
+plot(101-nqs, 1-aqs.train, col="blue", type="b", main="prediction error", xlab="number of questions", ylab="1-accuracy")
+points(101-nqs, 1-aqs.test, col="red", type="b")
+legend("topright", legend=c("train", "test"), col=c("blue", "red"), pch=1, cex=2)
+```
+
+Using uncoupled energies we cannot do better than an accuracy of 0.67 on the training set. May be we should get more pedestrian and try the simple canned logistic model
+### Logistic model
+Simply use the can on all variables
+```{r}
+comp.log <- glm(Happy ~ ., data=compTrain, family="binomial" )
+#significant questions,
+lqs <- c( "Q120194", "Q120014", "Q119334",  "Q118237", "Q115899", "Q107869", "Q102674", "Q102687", "Q102289","Q102089", "Q99716" )
+aqs.train.lqs <- sapply(nqs, function(n) accuracyForQs(lqs, compTrain))
+pred.log <- predict(comp.log, newdata=compTest, type="response")      
+tb <- table(compTest$Happy, pred.log > 0.5)
+sum(diag(tb))/sum(tb)
+```
+Raw logistic model is less accurate than our energy based method. We can combine the two, by feeding the energy disriminated questions to the logistic model, or the group mean discriminated questions,
+```{r}
+compTrain$HouseholdStatus <- relevel(compTrain$HouseholdStatus, "Single (no kids)")
+accLogisitic <- function(qs){
+  comp.log <- glm(Happy ~ ., data= compTrain[, c(qs,  "Happy")], family="binomial")
+  pred.train.log <- predict(comp.log, type="response")
+  pred.test.log <- predict(comp.log, newdata=compTest, type="response")
+  tbtrain <- table(compTrain$Happy, pred.train.log > 0.5)
+  tbtest <- table(compTest$Happy, pred.test.log > 0.5)
+  c(train=sum(diag(tbtrain))/sum(tbtrain), test=sum(diag(tbtest))/sum(tbtest))
+  
+}
+```
+
+###Clustering
+Interactions between variables will show up in clustering. HouseholdStatus is important, but clustering cannot handle this factor variable. So lets numericize it in the same way as we did the questions. 
+```{r}
+numerizeHousehold <- function(compNum){
+  hhls <- levels(compNum$HouseholdStatus)
+  hhlMeans <- sapply(hhls, function(l) mean(compNum$Happy[ compNum$HouseholdStatus==l])) 
+  hhlSizes <- sapply(hhls, function(l) sum( compNum$HouseholdStatus==l)) 
+  hhEns <- energyFromMean(hhlMeans)
+  hhln <- order(hhEns)
+  hhln[hhln] <- seq(-3, 3,)
+  names(hhln) <- hhls
+  compNum$HouseholdStatus <- sapply(compNum$HouseholdStatus, function(l) as.numeric(hhln[l]))
+  compNum
+}
+compTrainNum <- numerizeHousehold(compTrainNum)
+compTestNum <- numerizeHousehold(compTestNum)
+#and now for the test set
+
+```
+Now we can cluster
+```{r}
+cluCompTrain <- hclust(dist(compTrainNum[, c(qdeo[97:101], "HouseholdStatus")], method="euclidean"), method="ward")
+clusters <- cutree(cluCompTrain, k = 4)
+clusterHappiness <- t(sapply(1:4, function(n) c( happiness=mean(compTrain$Happy[clusters==n]), size=sum(clusters==n))))
+
+cutAndFindClusterHappiness <- function(clu, k){
+  clusters <- cutree(cluCompTrain, k = k)
+  t(sapply(1:k, function(n) c( happiness=mean(compTrain$Happy[clusters==n]), size=sum(clusters==n))))
+}
+clusterVariableMeans <- t(sapply(1:6, function(n) colMeans(compTrainNum[clusters==n, c(questions, "HouseholdStatus")])))
+
+clusterAccuracy <- function(chs, theta=0.5){
+  sum(apply(chs, 1, function(r) {if (r[1]< theta) (1-r[1])*r[2] else r[1]*r[2]}))/sum(chs[,2])
+}
+
+predictTest.byCluster <- function(cmpTst, qs = qdeo[97:101], k = 16){
+  compCombo <- rbind(compTrainNum, cmpTst)
+  cluCmp <- hclust(dist(compCombo[, c(qs, "HouseholdStatus")], method="euclidean"), method="ward")
+  clusters <- cutree(cluCmp, k = k)
+  clustersTrain <- clusters[1:nrow(compTrainNum)]
+  clustersTest <- clusters[(nrow(compTrainNum)+1):(nrow(compTrainNum) + nrow(compTestNum))]
+  clusterHappiness <- t(sapply(1:k, function(n) c( happiness=mean(compTrain$Happy[clustersTrain==n]), size=sum(clusters==n))))
+  clusterHappiness[clustersTest]
+}
+```
+Not better than the energy method. Lets try kmeans. We should come back to clustering to see if we can understand variable interactions using clusters. Or may be we should cluster the questions as well.
+#### How do the questions cluster? Are there any that stand out?
+```{r}
+qsdf <- t( compTrainNum[, c(qdeo[90:101], "Happy")])
+N <- nrow(qsdf)
+qsdf["Happy", ] <- 2*qsdf["Happy", ] - 1
+qsdf <- rbind( qsdf, -qsdf["Happy", ])
+rownames(qsdf) <- c( rownames(qsdf)[1:N], "Unhappy")
+qclu <- hclust(dist(qsdf, method="euclidean"), method="complete")
+plot(qclu)
+```
+This tells us the orientation of the questions, are they positive or negative for happy.
+Let us now use energies instead of -1/0/+1
+```{r}
+makeEnergyNum <- function(anss){
+  #anss <- anss[intersect(questions, names(anss))]
+  qanss <- names(anss)
+  as.numeric(
+    sapply(1:length(anss), function(i){ 
+        q <- qanss[i]
+        a <- anss[i]
+        groupEnergies[q, as.numeric(a)]
+      }
+      )
+ )
+}
+compTrainEnrgNumQs <- data.frame(t(sapply(1:nrow(compTrain), function(i) makeEnergyNum(compTrain[i, 9:109]))))
+colnames(compTrainEnrgNumQs) <- questions
+compTrainEnrgNum <- data.frame( compTrain[, 1:8], compTrainEnrgNumQs, compTrain[,110])
+colnames(compTrainEnrgNum) <- colnames(compTrain[, 1:110])
+rownames(compTrainEnrgNum) <- rownames(compTrain)
+
+compTestEnrgNumQs <- data.frame(t(sapply(1:nrow(compTest), function(i) makeEnergyNum(compTest[i, 9:109]))))
+colnames(compTestEnrgNumQs) <- questions
+compTestEnrgNum <- data.frame( compTest[, 1:8], compTestEnrgNumQs, compTest[,110])
+colnames(compTestEnrgNum) <- colnames(compTest[, 1:110])
+rownames(compTestEnrgNum) <- rownames(compTest)
+```
+We also need to numericize HouseholdStatus
+```{r}
+energyNumHousehold <- function(compNum){
+  hhls <- levels(compNum$HouseholdStatus)
+  hhlMeans <- sapply(hhls, function(l) mean(compNum$Happy[ compNum$HouseholdStatus==l])) 
+  hhEns <- energyFromMean(hhlMeans)
+  compNum$HouseholdStatus <- sapply(compNum$HouseholdStatus, function(l) as.numeric(hhEns[l]))
+  compNum
+}
+compTrainEnrgNum <- energyNumHousehold(compTrainEnrgNum)
+compTestEnrgNum <- energyNumHousehold(compTestEnrgNum)
+```
+Lets cluster again
+```{r}
+trclu <- hclust( dist(compTrainEnrgNum[ , c(questions, "HouseholdStatus")], method="euclidean"), method="ward")
+plot(trclu)
+clusters <- cutree(trclu, 8)
+clusterHappiness <- t(sapply(1:8, function(n) c( happiness=mean(compTrainEnrgNum$Happy[clusters==n]), size=sum(clusters==n))))
+
+trainAccuracy <- function(k){
+  ck <- cutree(trclu, k)
+    ch <- t(sapply(1:k, function(n) c( happiness=mean(compTrainEnrgNum$Happy[ck==n]), size=sum(ck==n))))
+    clusterAccuracy(ch)
+}
+
+
+predictTest.byCluster <- function(cmpTst, qs = qdeo[97:101], k = 16){
+  compCombo <- rbind(compTrainEnrgNum, cmpTst)
+  cluCmp <- hclust(dist(compCombo[, c(qs, "HouseholdStatus")], method="euclidean"), method="ward")
+  clusters <- cutree(cluCmp, k = k)
+  clustersTrain <- clusters[1:nrow(compTrainEnrgNum)]
+  clustersTest <- clusters[(nrow(compTrainEnrgNum)+1):(nrow(compTrainEnrgNum) + nrow(cmpTst))]
+  clusterHappiness <- t(sapply(1:k, function(n) c( happiness=mean(compTrainEnrgNum$Happy[clustersTrain==n]), size=sum(clusters==n))))
+  clusterHappiness[clustersTest]
+}
+testAccuracy <- function(k){
+  pred.cluEnr.test <- predictTest.byCluster(compTestEnrgNum, qs = questions, k = k)
+  tb <- table(compTestEnrgNum$Happy, pred.cluEnr.test> 0.5)
+  sum(diag(tb))/sum(tb)
+}
+ks <- seq(1, 128, 4)
+plot(ks, 
+  sapply(ks, trainAccuracy),
+  main="train accuracy when predicting by clusters, with questions numericized by their energy levels",
+  ylab="accuracy", 
+  col="blue",
+  type="b"
+)
+ks <- seq(1, 128, 8)
+points(ks, sapply(ks, testAccuracy), col="red", type="b")
+```
+Not better than not using clusters. Let us now use the energy method for each cluster.
+#### Energies for clusters
+```{r}
+computeGroupEnergies <- function(comp){
+  h <- mean(comp$Happy)
+  cgms <- data.frame(do.call("rbind", lapply(questions, function(q) computeGroupMeanByLevel(q, comp))))
+  cges <- t(apply(cgms, 1, function(m) energyFromMean(m, h)))
+  rownames(cges)  <- questions
+  cges
+}
+computeHouseholdEnergies <- function(comp){
+  hhls <- levels(compNum$HouseholdStatus)
+  hhlMeans <- sapply(hhls, function(l) mean(compNum$Happy[ compNum$HouseholdStatus==l])) 
+  energyFromMean(hhlMeans)
+}
+```
+Plotting the energy levels within a cluster compared to across all data are insightfull towards what characterizes the cluster.
+```{r}
+plotClusterEnergyVsPopEnergy <- function(clusters, k){
+  h <- mean(compTrain$Happy[clusters==k])
+  cges <- computeGroupEnergies(compTrain[clusters == k, ])
+  cges.ord <- t(apply(cges, 1, sort))
+  ge.ord <- t(apply(groupEnergies,1, sort))
+  plot(ge.ord[,1], cges.ord[,1], ylim=c(-1.07, 1.07), xlim=c(-1.07,1.07), col="red", 
+       main=paste(h, "cluster energy levels compared to the entire population"), 
+       ylab="cluster", xlab="population",
+       cex = 3
+  )
+  text( x=ge.ord[,1], y=cges.ord[,1], labels=1:101, col="red", cex=0.8)
+  points(ge.ord[,2], cges.ord[,2], col="green", cex=3)
+  text( x=ge.ord[,2], y=cges.ord[,2], labels=1:101, col="green", cex=0.8)
+  points(ge.ord[,3], cges.ord[,3], col="blue", cex=3)
+  text( x=ge.ord[,3], y=cges.ord[,3], labels=1:101, col="blue", cex=0.8)
+  legend("topleft", legend=c("Up", "Flat", "Down"), col=c("red", "green", "blue"), pch=1, cex=2) 
+  abline(0,1)
+}
+plotClusterEnergyVsPopEnergy(clusters, 1)
+plotClusterEnergyVsPopEnergy(clusters, 2)
+plotClusterEnergyVsPopEnergy(clusters, 3)
+plotClusterEnergyVsPopEnergy(clusters, 4)
+plotClusterEnergyVsPopEnergy(clusters, 5)
+plotClusterEnergyVsPopEnergy(clusters, 6)
+plotClusterEnergyVsPopEnergy(clusters, 7)
+plotClusterEnergyVsPopEnergy(clusters, 8)
+```
+Plots over all the question hide the differences between the clusters. What about most discriminating questions?
+```{r}
+qdeoCluster <- function(clusters, k){
+  cges <- computeGroupEnergies(compTrain[clusters == k, ])
+  cges.ord <- t(apply(cges, 1, sort))
+  cges.ord <- cges.ord[ order(cges.ord[,3]-cges.ord[,1]),]
+  rownames(cges.ord)
+}
+qranks <- function(qd){
+  qo <- 1:101
+  names(qo) <- qd
+  qo[questions]
+}
+qr0 <- qranks(qdeo)
+
+cluqsorted <- data.frame(do.call("cbind", lapply(1:8, function(k)qdeoCluster(clusters, k))))
+colnames(cluqsorted) <- sapply(1:8, function(x) paste("Clu", x, sep=""))
+cluqsorted$Clu0 <- qdeo
+
+cluqranks <- data.frame(do.call("cbind", lapply(1:8, function(k) qranks(qdeoCluster(clusters, k)))))
+rownames(cluqranks) <- questions
+colnames(cluqranks) <- sapply(1:8, function(x) paste("Clu", x, sep=""))
+cluqranks$Clu0<- qr0
+makeQrankPlots <- function(i, j){
+  qr0 <- cluqranks[, i]
+  qr1 <- cluqranks[, j]
+  plot(qr0, qr1, col="red", cex = 3, main="rank of questions, cluster vs population",  ylab="population", xlab="cluster")
+  text( x=qr0, y=qr1, labels=1:101, col="red")
+  abline(0,1)
+  abline(h=90)
+  abline(v=90)
+}
+```
+Predictions on the training set is straightforward, 
+```{r}
+clusterGEs <- lapply(1:8, function(k) computeGroupEnergies(compTrain[clusters==k,]))
+compTrain.totalEnrg <- sapply(1:nrow(compTrain), function(n) totalEnergy(compTrain[n, 9:109], ge=clusterGEs[[clusters[n]]], hmean=clusterHappiness[clusters[n]]))
+compTrain.prob <- 1/(1 + exp(compTrain.totalEnrg))
+```
+Predict on the test set
+```{r}
+compCombo <- rbind(compTrainEnrgNum,  compTestEnrgNum)
+cluCombo <- hclust( dist(compCombo[ , c(questions, "HouseholdStatus")], method="euclidean"), method="ward")
+  k <- 8
+  clusters <- cutree(cluCombo, k = k)
+  clustersTrain <- clusters[1:nrow(compTrainEnrgNum)]
+  clustersTest <- clusters[(nrow(compTrainEnrgNum)+1):(nrow(compTrainEnrgNum) + nrow(compTestEnrgNum))]
+  clusterGEs <- lapply(1:k, function(n) computeGroupEnergies(compTrain[clustersTrain==n,]))
+  cluqsorted <- data.frame(do.call("cbind", lapply(1:k, function(n)qdeoCluster(clustersTrain, n))))
+  hhe <- computeHouseholdEnergies(compTrain)
+  compTrain.totalEnrg <- sapply(1:nrow(compTrain), function(n) {
+    k <- clustersTrain[n]
+    qdeo <- as.character(cluqsorted[97:101, k])
+    totalEnergy(compTrain[n, c(qdeo, "HouseholdStatus")], ge=clusterGEs[[clustersTrain[n]]], hhe=NULL, hmean=clusterHappiness[clustersTrain[n]])
+  })
+
+  compTest.totalEnrg <- sapply(1:nrow(compTest), function(n) {
+    k <- clustersTest[n]
+    qdeo <- as.character(cluqsorted[97:101, k])
+    totalEnergy(compTest[n, c(qdeo, "HouseholdStatus")], ge=clusterGEs[[clustersTest[n]]], hhe=NULL, hmean=clusterHappiness[clustersTest[n]]) 
+  })
+                                                                                                                      
+                                                                                                                      
+  clusterHappiness <- t(sapply(1:k, function(n) c(mean(compTrain$Happy[clustersTrain==n]), sum(clustersTrain==n))))
+  #prob.cluster.test <- clusterHappiness[clustersTest]
+  prob.cluster.enrg.test <-   1/(1 + exp(compTest.totalEnrg))
+  prob.cluster.enrg.train<- 1/(1 + exp(compTrain.totalEnrg))
+  tb <- table(compTrain$Happy, prob.cluster.enrg.train > 0.5)
+  sum(diag(tb))/sum(tb)
+  tb <- table(compTest$Happy, prob.cluster.enrg.test > 0.5)
+  sum(diag(tb))/sum(tb)
+```
+We should give up after running Kmeans clustering
+###K-means
+```{r}
+compCombo <- rbind(compTrainEnrgNum,  compTestEnrgNum)
+k <- 8
+compKMC <- kmeans(compCombo[, c(questions, "HouseholdStatus")], centers=k, iter.max=1000)
+clusters <- compKMC$cluster
+clustersTrain <- clusters[1:nrow(compTrainEnrgNum)]
+clustersTest <- clusters[(nrow(compTrainEnrgNum)+1):(nrow(compTrainEnrgNum) + nrow(compTestEnrgNum))]
+clusterGEs <- lapply(1:k, function(n) computeGroupEnergies(compTrain[clustersTrain==n,]))
+cluqsorted <- data.frame(do.call("cbind", lapply(1:k, function(n)qdeoCluster(clustersTrain, n))))
+hhe <- computeHouseholdEnergies(compTrain)
+compTrain.totalEnrg <- sapply(1:nrow(compTrain), function(n) {
+  k <- clustersTrain[n]
+  qdeo <- as.character(cluqsorted[96:101, k])
+  totalEnergy(compTrain[n, c(qdeo, "HouseholdStatus")], ge=clusterGEs[[clustersTrain[n]]], hhe=NULL, hmean=clusterHappiness[clustersTrain[n]])
+})
+
+compTest.totalEnrg <- sapply(1:nrow(compTest), function(n) {
+  k <- clustersTest[n]
+  qdeo <- as.character(cluqsorted[96:101, k])
+  totalEnergy(compTest[n, c(qdeo, "HouseholdStatus")], ge=clusterGEs[[clustersTest[n]]], hhe=NULL, hmean=clusterHappiness[clustersTest[n]]) 
+})
+                                                                                                                    
+                                                                                                                    
+clusterHappiness <- t(sapply(1:k, function(n) c(mean(compTrain$Happy[clustersTrain==n]), sum(clustersTrain==n))))
+#prob.cluster.test <- clusterHappiness[clustersTest]
+prob.cluster.enrg.test <-   1/(1 + exp(compTest.totalEnrg))
+prob.cluster.enrg.train<- 1/(1 + exp(compTrain.totalEnrg))
+tb <- table(compTrain$Happy, prob.cluster.enrg.train > 0.5)
+sum(diag(tb))/sum(tb)
+tb <- table(compTest$Happy, prob.cluster.enrg.test > 0.5)
+sum(diag(tb))/sum(tb)
+```
+We do not have to cluster the test data along with the training data. For kmeans we can easily assign the test data to clusters
+```{r}
+k <- 4
+compKMC <- kmeans(compTrainEnrgNum[, c(questions, "HouseholdStatus")], centers=k, iter.max=10000)
+clusters.train <- compKMC$cluster
+clusterGEs <- lapply(1:k, function(n) computeGroupEnergies(compTrain[clusters.train==n,]))
+cluqsorted <- data.frame(do.call("cbind", lapply(1:k, function(n)qdeoCluster(clusters.train, n))))
+hhe <- computeHouseholdEnergies(compTrain)
+predict.kmc <- function(comp){
+  apply(comp, 1, function(r) which.min(apply(compKMC$centers, 1, function(x) sum( (x - r)^2))))
+}
+clusters.test <- predict.kmc(compTestEnrgNum[, c(questions, "HouseholdStatus")])
+compTrain.totalEnrg <- sapply(1:nrow(compTrain), function(n) {
+  k <- clusters.train[n]
+  qdeo <- as.character(cluqsorted[96:101, k])
+  totalEnergy(compTrain[n, c(qdeo, "HouseholdStatus")], ge=clusterGEs[[k]], hhe=NULL, hmean=clusterHappiness[k])
+})
+
+compTest.totalEnrg <- sapply(1:nrow(compTest), function(n) {
+  k <- clusters.test[n]
+  qdeo <- as.character(cluqsorted[96:101, k])
+  totalEnergy(compTest[n, c(qdeo, "HouseholdStatus")], ge=clusterGEs[[k]], hhe=NULL, hmean=clusterHappiness[k]) 
+})
+                                                                                                                    
+                                                                                                                    
+clusterHappiness <- t(sapply(1:k, function(n) c(mean(compTrain$Happy[clustersTrain==n]), sum(clustersTrain==n))))
+#prob.cluster.test <- clusterHappiness[clustersTest]
+prob.cluster.enrg.test <-   1/(1 + exp(compTest.totalEnrg))
+prob.cluster.enrg.train<- 1/(1 + exp(compTrain.totalEnrg))
+tb <- table(compTrain$Happy, prob.cluster.enrg.train > 0.5)
+sum(diag(tb))/sum(tb)
+tb <- table(compTest$Happy, prob.cluster.enrg.test > 0.5)
+sum(diag(tb))/sum(tb)  
+```
+Finally lets cluster the happy guys separately and the unhappy separately. However we cannot use energy regression for prediction.
+```{r}
+k <- 2
+compTrainHappy <- compTrainEnrgNum[compTrainEnrgNum$Happy==1, c(questions, "HouseholdStatus")]
+compHappyKMC <- kmeans(compTrainHappy, centers=k, iter.max=10000)
+compTrainUnhappy <- compTrainEnrgNum[compTrainEnrgNum$Happy!=1, c(questions, "HouseholdStatus")]
+compUnhappyKMC <- kmeans(compTrainUnhappy, centers=k, iter.max=10000)
+
+plot(compUnhappyKMC$centers[1,], compUnhappyKMC$centers[2,], cex=3)
+text( x= compUnhappyKMC$centers[1,], y=compUnhappyKMC$centers[2,], labels=c(1:102))
+
+plot(compHappyKMC$centers[1,], compHappyKMC$centers[2,], cex=3)
+text( x= compHappyKMC$centers[1,], y=compHappyKMC$centers[2,], labels=c(1:102))
+
+plot(compUnhappyKMC$centers[1,], compUnhappyKMC$centers[2,], cex=3, col="orange", ylim=c(-0.3, 0.7), xlim=c(-0.25, 0.7), main="center vs center for 2 clusters of unhappy and 2 cluster of happy", ylab="2", xlab="1")
+text( x= compUnhappyKMC$centers[1,], y=compUnhappyKMC$centers[2,], labels=c(1:102), col="orange")
+points(compHappyKMC$centers[1,], compHappyKMC$centers[2,], cex=3, col="green")
+text( x= compHappyKMC$centers[1,], y=compHappyKMC$centers[2,], labels=c(1:102), col="green")
+legend("topright", legend=c("unhappy", "happy"), col=c("orange", "green"), pch=1, cex=2)
+abline(h=0, v=0)
+
+```
+This last plot is very instructive. Questions fall on the opposing sides of the diagonals!
+We notice that the max groupMean is 0.702. Our accuracy comes close to this number ( best for the energy regression). The min energy level corresponds to a probability of 0.7. The question with the highest energy level  corresponding to the question generally optimistic ... The question with lowest energy level, life feels adventurous.
+
+Time now to play with interactions
+###Interactions
+```{r}
+interactionVariable <- function(u, v){
+  if(is.numeric(u) & is.numeric(v)) u + v
+  else if (is.factor(u) & is.factor(v)) sapply(1:length(u), function(i) paste(as.character(u[i]), as.character(v[i])))
+  else print("Incompatible variable types")
+}
+  
+ivs <- do.call("cbind", lapply(97:100, function(i) do.call("cbind", lapply((i+1):101, function(j) interactionVariable(comp[, qdeo[i]], comp[, qdeo[j]]))) ))
+
+ivs <- data.frame(ivs)
+colnames(ivs) <- do.call("c", c(sapply( 97:100, function(i) sapply((i+1):101, function(j) paste(qdeo[i], qdeo[j], sep="."))) ))
+ivs <- cbind(ivs, comp[, qdeo[97:101]])
+ivs$Happy <- comp$Happy
+ivs.train <- subset(ivs, split==TRUE)
+ivs.test <- subset(ivs, split==FALSE)
+
+iv.gems.1 <- do.call("rbind", lapply( 11:15, function(i) sapply(levels(ivs.train[,i]), function(l) mean( ivs.train[ ivs.train[,i] == l, 16])/h)))
+iv.Pgh.1 <- iv.gems.1/rowSums(iv.gems.1)
+iv.lPgh.1 <- -log(iv.Pgh.1)
+rownames(iv.lPgh.1) <- colnames(ivs.train)[11:15]
+
+iv.gems.2 <- do.call("rbind", lapply( 1:10, function(i) sapply(levels(ivs.train[,i]), function(l) mean( ivs.train[ ivs.train[,i] == l, 16])/h)))
+iv.Pgh.2 <- iv.gems.2/rowSums(iv.gems.2)
+iv.lPgh.2 <- -log(iv.Pgh.2)
+rownames(iv.lPgh.2) <- colnames(ivs.train)[1:10]
+
+indepLogProb <- function(i, j){
+  e <- c(sapply(1:3, function(l) sapply(1:3, function(m) iv.lPgh.1[i,l] + iv.lPgh.1[j,m])))
+  names(e) <- c(sapply(levels(comp[,rownames(iv.lPgh.1)[i]]), function(l) sapply( levels(comp[, rownames(iv.lPgh.1)[j]]), function(m) paste(l,m))))
+  e
+}
+iv.lPgh.2.ind <- do.call("rbind", lapply(1:4, function(i) do.call("rbind", lapply((i+1):5, function(j) indepLogProb(i,j)))))
+
+entropy <- function(p) -sum(p*log(p)/log(2))
+
+mi <- sapply(1:10, function(i) entropy( exp(-iv.lPgh.2[i, ])) - entropy(exp(-iv.lPgh.2.ind[i,])))
+
+iv.Phg.1 <-  do.call("rbind", lapply( 11:15, function(i) sapply(levels(ivs.train[,i]), function(l) mean( ivs.train[ ivs.train[,i] == l, 16]))))
+rownames(iv.Phg.1) <- colnames(ivs.train)[11:15]
+
+iv.Phg.2 <- do.call("rbind", lapply( 1:10, function(i) sapply(levels(ivs.train[,i]), function(l) mean( ivs.train[ ivs.train[,i] == l, 16]))))
+rownames(iv.Phg.2) <- colnames(ivs.train)[1:10]
+
+e12 <- t(apply(iv.Phg.2, 1, function(m) -log(m/(1-m))))
+rownames(e12) <- colnames(ivs.train)[1:10]
+
+indepEnergy <- function(i, j){
+  e <- c(sapply(1:3, function(l){
+                sapply(1:3, function(m){
+                  -log( iv.Phg.1[i, l]/(1-iv.Phg.1[i, l])) - log( iv.Phg.1[j, m]/(1 - iv.Phg.1[j,m])) +log(h/(1-h))
+                })
+        })
+       )
+  names(e) <- c(sapply(levels(comp[,rownames(iv.lPhg.1)[i]]), function(l) sapply( levels(comp[, rownames(iv.lPhg.1)[j]]), function(m) paste(l,m))))
+  e
+}
+
+e1p2 <- do.call("rbind", lapply(1:4, function(i) do.call("rbind", lapply((i+1):5, function(j) indepEnergy(i,j)))))
+rownames(e1p2) <- colnames(ivs.train)[1:10]
+
+```
+  

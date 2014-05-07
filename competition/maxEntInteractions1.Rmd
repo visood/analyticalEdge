@@ -1,0 +1,442 @@
+---
+title: "maxEntInteractions"
+output: pdf_document
+---
+
+What we did, the elm, was a naive Bayes solution. Now let us try a maxent!!!
+```{r maxEntByIterating}
+
+levelResponse <- function(response, predictors, r=1) { # all numerical, no names
+  sapply(1:ncol(predictors), function(s) sum(response == r & predictors[,s]))
+}
+
+nextMaxEnt <- function(J, response, predictors, betap = 1){
+  M <- ncol(predictors)
+  mns <-  sapply(1:M, function(s) {
+            sum(apply(predictors[predictors[,s],], 1, function(S) {
+              Sp <- S
+              Sp[s] <- FALSE
+              exp(-sum(J[Sp]))/(1 + exp(-sum(J[S])))
+            }))
+          })
+  Smean <- colMeans(predictors)
+  bns <-  sapply(1:M, function(s) {
+                Sp <- Smean
+                Sp[s] <- 0
+                exp(-sum( J*Sp))/(1 + exp(-sum(J*Smean))) #what else can we use?
+          })
+  lmns <- log( mns + betap*bns)
+  lr <- log(levelResponse(response, predictors, r=1) + betap*mean(response))
+  lmns - lr
+}
+
+naiveBayes <- function( response, predictors, betap = 1){
+  lr0 <- log(levelResponse(response, predictors , r = 0) + betap*mean(response))
+  lr1 <- log(levelResponse(response, predictors , r = 1) + betap*mean(response))
+  lr0 - lr1
+}
+  
+predict.maxent <- function(J, predictors) {
+  apply(predictors, 1, function(S) exp(-sum(J[S]))/(1 + exp(-sum(J[S]))))
+}
+
+predict.naiveBayes <- function(J, h, predictors){
+  apply(predictors, 1, function(S) exp(-sum(J[S] - h) + h)/(1 +exp(-sum(J[S] - h) + h)))
+}
+
+
+
+
+```
+
+Test it!
+
+And we should consider dependent X1. X2
+```{r dependence}
+makeDummy <- function(X, as.logi = TRUE){
+  v <- sort(unique(X))
+  if(as.logi) t(sapply(X, function(x) x == v))
+  else t(sapply(X, function(x) as.numeric(x==v)))
+}
+addInteraction <- function(X, V1, V2, vidx, as.logi=TRUE, rm.cols=TRUE){
+  if(as.logi){
+    addedCols <-  do.call("cbind", lapply(vidx[[V1]], function(i) {
+                    do.call("cbind", lapply(vidx[[V2]], function(j) {X[,i]&X[,j]}))
+                  }))
+  }
+  else {
+    addedCols <-  do.call("cbind", lapply(vidx[[V1]], function(i) {
+                    do.call("cbind", lapply(vidx[[V2]], function(j) {as.numeric(X[,i]&X[,j])}))
+                  }))
+  }
+  if(rm.cols) cbind(X[, -c(vidx[[V1]], vidx[[V2]])], addedCols)
+  else  cbind(X, addedCols)
+}
+makeFactorInteraction <- function(cd){ # assuming two columns of factors
+  uv <- list(sapply(1:nrow(cd), function(i) paste(as.character(cd[i,1]), as.character(cd[i,2]), sep=".")))
+  names(uv) <- paste(colnames(cd)[1], colnames(cd)[2], sep=".")
+  as.data.frame(uv)
+}
+makeInteraction <- function(X, V1, V2, vidx, as.logi=TRUE){
+  if(as.logi){
+    addedCols <-  do.call("cbind", lapply(vidx[[V1]], function(i) {
+                    do.call("cbind", lapply(vidx[[V2]], function(j) {X[,i]&X[,j]}))
+                  }))
+  }
+  else {
+    addedCols <-  do.call("cbind", lapply(vidx[[V1]], function(i) {
+                    do.call("cbind", lapply(vidx[[V2]], function(j) {as.numeric(X[,i]&X[,j])}))
+                  }))
+  }
+  addedCols
+}
+
+```
+
+pairwise entropies
+```{r pairwiseEntropies}
+entropyDist <- function(ps, base=2) -sum(sapply(ps, function(p) if(p > 0) p*log(p)/log(base) else 0))
+entropyVar <- function(X, base = 2) {
+  N <- length(X)
+  if(is.factor(X)){
+    entropyDist( sapply(levels(X), function(v) sum(X==v))/N, base = base)
+  }
+  else{
+    entropyDist( sapply(unique(X), function(v) sum(X==v))/N, base = base)
+  }
+}
+mutualInformation <- function(X1, X2, base = 2){
+  H1 <- entropyVar(X1, base)
+  H2 <- entropyVar(X2, base)
+  H12 <- entropyDist(t(sapply(levels(X1), function(v1) sapply(levels(X2), function(v2) sum(X1==v1 & X2==v2))))/length(X1), base)
+  H1 + H2 - H12
+}
+pairwiseMutualInformation <- function(data){
+  M <- ncol(data) 
+  N <- nrow(data)
+  milist <- sapply(1:(M-1), function(i) sapply((i+1):M, function(j) {
+      X1 <- data[,i]
+      X2 <- data[,j]
+      V1 <- levels(X1)
+      V2 <- levels(X2)
+      Q1 <- sapply(V1, function(v1) sum(X1==v1))/N
+      Q2 <- sapply(V2, function(v2) sum(X2==v2))/N
+      Q <- t(sapply(V1, function(v1) sapply(V2, function(v2) sum(X1==v1 & X2==v2))))/N
+      entropyDist(Q1, base=3) + entropyDist(Q2, base=3) - entropyDist(Q, base=3)
+  }))
+  elist <- sapply(1:M, function(i) {
+      X1 <- data[,i]
+      V1 <- levels(X1)
+      Q1 <- sapply(V1, function(v1) sum(X1==v1))/N
+      entropyDist(Q1, base=3)
+  })
+  emat <- matrix(0, nrow=M, ncol=M)
+  for(i in 1:(M-1)){
+    for(j in 1:(M-i)){
+      emat[i,i+j] <- milist[[i]][j]
+      emat[i+j,i] <- emat[i,i+j]
+    }
+  }
+  for(i in 1:M){ emat[i,i] <- elist[i]}
+  emat
+}
+
+miHappy <- do.call("c", lapply(svord, function(q) mutualInformation(compData[,q], as.factor(compData$Happy), base=2)))
+miqpairs <- pairwiseMutualInformation(compData[, svord])
+miqpairs.H1 <- pairwiseMutualInformation(compData[ compData$Happy == 1, svord])
+miqpairs.H0 <- pairwiseMutualInformation(compData[ compData$Happy == 0, svord])
+```
+
+```{r simulatedData}
+N <- 1000
+#J <- 10*(runif(n=4) -1/2)
+J <- 2*c(-1, 0., -1, 1.)
+V1 <- c(1,2)
+V2 <- c(1,2)
+varDummyIndex <- matrix(c(1,2,3,4), nrow=2, ncol=2, byrow=TRUE)
+cor12 <- 0.75
+X1 <- sample(V1, N, replace=TRUE)
+X2 <- sample(V2, N, replace=TRUE)
+rx <- runif(n=N) < cor12
+X2 <- sapply(1:N, function(i) if (rx[i]) X1[i] else X2[i])
+cor(X1, X2)
+X12 <- cbind(X1, X2)
+qtab <- t(sapply(V1, function(v1) sapply(V2, function(v2) sum(X1==v1 & X2==v2))))/N
+#qtab <- t(sapply(V1, function(v1) sapply(V2, function(v2) 0.25)))
+
+ptab <- t(sapply(V1, function(v1) sapply(V2, function(v2) {
+  Jsum <- J[varDummyIndex[1,v1]] + J[varDummyIndex[2,v2]]
+  exp(-Jsum)/(1 + exp(-Jsum))
+})))
+
+pyx <- apply(X12, 1, function(x) ptab[x[1], x[2]])#qtab[x[1], x[2]])
+Y <- sapply(1:N,  function(i) if(runif(1) < pyx[i]) 1 else 0)
+XY <- cbind(X12, Y)
+X1 <- X12[,1]
+X2 <- X12[,2]
+dummyX <- cbind(makeDummy(X1), makeDummy(X2))
+dummyXY <- as.data.frame(do.call("cbind", (lapply(X, function(x)makeDummy(x, as.logi=FALSE)))))
+dummyXY$Y <- Y
+
+
+#dependence
+entropy <- function(ps, base=2) -sum(sapply(ps, function(p) if(p > 0) p*log(p)/log(base) else 0))
+entropyPQ <- function(P, Q, base=2){
+  px12.y <- P*Q/sum(P*Q)
+  px1.y <- rowSums(px12.y)
+  px2.y <- colSums(px12.y)
+  entropy(px1.y, base) + entropy(px2.y, base) - entropy(px12.y, base)
+}
+entropyPQ(ptab, qtab)
+entropyPQ(ptab, matrix(rep(0.25, 4), nrow=2, ncol=2))
+#data
+ptabData <- sapply(V1, function(v1) sapply(V2, function(v2) sum(Y==1 & X1==v1 & X2==v2)/sum(X1==v1 & X2 == v2)))
+entropyPQ(ptabData, qtab)
+entropyPQ(ptabData, matrix(rep(0.25, 4), nrow=2, ncol=2))
+
+
+```
+Lets compare the predictions to
+```{r}
+library(caTools)
+set.seed(1121)
+split <- sample.split(Y, SplitRatio = 0.7)
+dummyXY.train <- subset(dummyXY, split == TRUE)
+dummyXY.test <- subset(dummyXY, split==FALSE)
+xy.glm <- glm(Y ~ ., data=dummyXY.train, family="binomial")
+glm.pred <- predict(xy.glm, newdata=dummyXY.test, type="response")
+dummyX.train <- subset(dummyX, split==TRUE)
+dummyX.test <- subset(dummyX, split==FALSE)
+Y.train <- subset(Y, split==TRUE)
+Y.test <- subset(Y, split==FALSE)
+Jn <- naiveBayes(Y.train, dummyX.train, betap=1)
+h <- -log(mean(Y.train)/(1-mean(Y.train)))
+nb.pred <- predict.naiveBayes(Jn, h, dummyX.test )
+Je <- Jn
+eps <- 0.043
+for(i in 1:100){
+  Je <- eps*nextMaxEnt(Je, Y.train, dummyX.train, betap=0) + (1-eps)*Je
+}
+me.pred <- predict.maxent(Je, dummyX.test)
+plot(nb.pred, me.pred, xlim=c(0,1), ylim=c(0,1), ylab="MaxEntropy preds", xlab="Naive Bayes preds", col="red")
+points(nb.pred, glm.pred, col="blue")
+points(glm.pred, me.pred, col="green")
+abline(h=0.5, v=0.5)
+abline(0,1)
+
+tabacc( table(dummyXY.test$Y, glm.pred > 0.5))
+tabacc( table(Y.test, nb.pred > 0.5))
+tabacc( table(Y.test, me.pred > 0.51))
+
+performance(prediction(glm.pred, Y.test), "auc")@y.values
+performance(prediction(nb.pred, Y.test), "auc")@y.values
+performance(prediction(me.pred, Y.test), "auc")@y.values
+perf.glm <- performance( prediction( glm.pred, Y.test), "tpr", "fpr")
+perf.nb <- performance( prediction( nb.pred, Y.test), "tpr", "fpr")
+perf.me <- performance( prediction( me.pred, Y.test), "tpr", "fpr")
+plot(perf.glm, colorize=TRUE)
+plot(perf.nb, colorize=TRUE)
+plot(perf.me, colorize=TRUE)
+```
+
+```{r}
+compData <- read.csv("train.csv")
+questions <- colnames(compData)[9:109]
+library(caTools)
+split <- sample.split( compData$Happy, SplitRatio = 0.7)
+compTrain <- subset(compData, split==TRUE)
+compTest <- subset(compData, split==FALSE)
+tabacc <- function(tb) sum(diag(tb))/sum(tb)
+
+
+  
+X <- compData[, svord[c(1,2,3,4, 5,6, 7)]]
+Y <- compData$Happy
+dummyX <- do.call("cbind", (lapply(X, makeDummy)))
+varIndex <- list()
+n <- 1
+for(q in colnames(X)){
+  varIndex[[q]] <- n:(n+length(levels(X[,q]))-1)
+  n <- n + length(levels(X[, q]))
+}
+
+dummyXY <- as.data.frame(do.call("cbind", (lapply(X, function(x)makeDummy(x, as.logi=FALSE)))))
+dummyXY$Y <- Y
+
+set.seed(1121)
+split <- sample.split(Y, SplitRatio = 0.7)
+dummyXY.train <- subset(dummyXY, split == TRUE)
+dummyXY.test <- subset(dummyXY, split==FALSE)
+xy.glm <- glm(Y ~ ., data=dummyXY.train, family="binomial")
+glm.pred <- predict(xy.glm, newdata=dummyXY.test, type="response")
+dummyX.train <- subset(dummyX, split==TRUE)
+dummyX.test <- subset(dummyX, split==FALSE)
+Y.train <- subset(Y, split==TRUE)
+Y.test <- subset(Y, split==FALSE)
+Jn <- naiveBayes(Y.train, dummyX.train, betap=1)
+h <- -log(mean(Y.train)/(1-mean(Y.train)))
+nb.pred <- predict.naiveBayes(Jn, h, dummyX.test )
+Je <- Jn
+eps <- 0.043
+for(i in 1:100){
+  Je <- eps*nextMaxEnt(Je, Y.train, dummyX.train, betap=0) + (1-eps)*Je
+}
+me.pred <- predict.maxent(Je, dummyX.test)
+tabacc( table(dummyXY.test$Y, glm.pred > 0.5))
+tabacc( table(Y.test, nb.pred > 0.5))
+tabacc( table(Y.test, me.pred > 0.5))
+
+performance(prediction(glm.pred, Y.test), "auc")@y.values
+performance(prediction(nb.pred, Y.test), "auc")@y.values
+performance(prediction(me.pred, Y.test), "auc")@y.values
+
+
+split <- sample.split(Y, SplitRatio = 0.7)
+
+
+  
+  
+dummyX.int <- addInteraction(dummyX, svord[i], svord[j], varIndex, as.logi=TRUE)
+
+dummyXY.int.train <- subset(dummyXY.int, split == TRUE)
+dummyXY.int.test <- subset(dummyXY.int, split==FALSE)
+xy.int.glm <- glm(Y ~ ., data=dummyXY.int.train, family="binomial")
+glm.int.pred <- predict(xy.int.glm, newdata=dummyXY.int.test, type="response")
+dummyX.int.train <- subset(dummyX.int, split==TRUE)
+dummyX.int.test <- subset(dummyX.int, split==FALSE)
+Y.train <- subset(Y, split==TRUE)
+Y.test <- subset(Y, split==FALSE)
+Jn <- naiveBayes(Y.train, dummyX.int.train, betap=1)
+h <- -log(mean(Y.train)/(1-mean(Y.train)))
+nb.int.pred <- predict.naiveBayes(Jn, h, dummyX.int.test )
+Je <- Jn
+eps <- 0.043
+for(i in 1:100){
+  Je <- eps*nextMaxEnt(Je, Y.train, dummyX.int.train, betap=0) + (1-eps)*Je
+}
+me.int.pred <- predict.maxent(Je, dummyX.int.test)
+tabacc( table(dummyXY.int.test$Y, glm.pred > 0.5))
+tabacc( table(Y.test, nb.pred > 0.5))
+tabacc( table(Y.test, me.pred > 0.51))
+
+performance(prediction(glm.int.pred, Y.test), "auc")@y.values
+performance(prediction(nb.int.pred, Y.test), "auc")@y.values
+performance(prediction(me.int.pred, Y.test), "auc")@y.values
+```
+
+```{r}
+
+analyseVariables <- function(dummyXY, predictors){
+  split <- sample.split(Y, SplitRatio=0.7)
+  dummyXY.train <- subset(dummyXY, split == TRUE)
+  dummyXY.test <- subset(dummyXY, split==FALSE)
+  xy.glm <- glm(Y ~ ., data=dummyXY.train[, c(predictors, "Y")], family="binomial")
+  glm.pred <- predict(xy.glm, newdata=dummyXY.test[, c(predictors, "Y")], type="response")
+  tabacc( table(dummyXY.test$Y, glm.pred > 0.5))
+}
+glmCrossValidate <- function(dummyXY, auc=FALSE){
+  N <- nrow(dummyXY)
+  rindexShuffled <- sample(1:N, N, replace=FALSE)
+  cvistop <- (1:4)*floor(N/5)
+  cvistart <- c(1, cvistop+1)
+  cvistop <- c(cvistop, N)
+  mean(sapply(1:5, function(k) {
+      testidx <- cvistart[k]:cvistop[k]
+      dummyXY.test <- dummyXY[ testidx, ]
+      dummyXY.train <- dummyXY[-testidx, ]
+      xy.glm <- glm(Y ~ ., data=dummyXY.train, family="binomial")
+      glm.pred <- predict(xy.glm, newdata=dummyXY.test, type="response")
+      if(!auc) tabacc( table(dummyXY.test$Y, glm.pred > 0.5))
+      else performance(prediction(glm.pred, dummyXY.test$Y), "auc")@y.values[[1]]
+    })
+  )
+}
+analyseInteraction <- function(i, j){
+  X <- compData[, predictors]
+  Y <- compData$Happy
+  varIndex <- list()
+  n <- 1
+  for(q in colnames(X)){
+    varIndex[[q]] <- n:(n+length(levels(X[,q]))-1)
+    n <- n + length(levels(X[, q]))
+  }
+
+  dummyXY <- as.data.frame(do.call("cbind", (lapply(X, function(x)makeDummy(x, as.logi=FALSE)))))
+  dummyXY$Y <- Y  
+  split <- sample.split(Y, SplitRatio=0.7)
+  dummyXY.int <- addInteraction(dummyXY, svord[i], svord[j], varIndex, as.logi=FALSE)
+  dummyXY.int.train <- subset(dummyXY.int, split == TRUE)
+  dummyXY.int.test <- subset(dummyXY.int, split==FALSE)
+  xy.int.glm <- glm(Y ~ ., data=dummyXY.int.train, family="binomial")
+  glm.int.pred <- predict(xy.int.glm, newdata=dummyXY.int.test, type="response")
+  tabacc( table(dummyXY.int.test$Y, glm.int.pred > 0.5))
+}
+analyseVariablesWithCrossValidation <- function(dummyXY, predictors, auc=FALSE){
+  glmCrossValidate(dummyXY[, c(predictors, "Y")], auc=auc)
+}
+analyseInteractionWithCrossValidation <- function(dummyXY,  interactions, varIndex, allPredictors, auc=FALSE){
+  dummyInts <- lapply(interactions, function(q12) makeInteraction(dummyXY, q12[1], q12[2], varIndex, as.logi=FALSE))
+  intPredictors <- unique(do.call("c", lapply(interactions, function(q12) q12[2])))
+  otherPredictors <- Filter(function(q) !(q %in% intPredictors), allPredictors )
+  dummyXY.other <- dummyXY[, do.call("c", lapply(otherPredictors, function(q) varIndex[[q]]))]
+  #dummyXY.int <- makeInteraction(dummyXY, q1, q2, varIndex, as.logi=FALSE)
+  dummyXY.int <- do.call("cbind", dummyInts)
+  dummyXY <- cbind(dummyXY.other, dummyXY.int, Y=dummyXY$Y)
+  glmCrossValidate(dummyXY, auc)
+}
+
+glmModelPred <- function(dummyXY.train, dummyXY.test, predictors){
+  xy.glm <- glm(Y ~ ., data=dummyXY.train[, c(predictors, "Y")], family="binomial")
+  predict(xy.glm, newdata=dummyXY.test, type="response")
+}
+
+glmModelPredsWithInteractions <- function(dummyXY.train, dummyXY.test,  interactions, varIndex, allPredictors){
+  dummyInts.train <- lapply(interactions, function(q12) makeInteraction(dummyXY.train, q12[1], q12[2], varIndex, as.logi=FALSE))
+  dummyInts.test <- lapply(interactions, function(q12) makeInteraction(dummyXY.test, q12[1], q12[2], varIndex, as.logi=FALSE))
+  intPredictors <- unique(do.call("c", lapply(interactions, function(q12) q12[2])))
+  otherPredictors <- Filter(function(q) !(q %in% intPredictors), allPredictors )
+  dummyXY.train.other <- dummyXY.train[, do.call("c", lapply(otherPredictors, function(q) varIndex[[q]]))]
+  dummyXY.test.other <- dummyXY.test[, do.call("c", lapply(otherPredictors, function(q) varIndex[[q]]))]
+  dummyXY.train.int <- do.call("cbind", dummyInts.train)
+  dummyXY.test.int <- do.call("cbind", dummyInts.test)
+  dummyXY.train <- cbind(dummyXY.train.other, dummyXY.train.int, Y=dummyXY.train$Y)
+  dummyXY.test <- cbind(dummyXY.test.other, dummyXY.test.int)
+  xy.glm <- glm(Y ~ ., data=dummyXY.train, family="binomial")
+  predict(xy.glm, newdata=dummyXY.test, type="response")
+}
+
+
+submission <- function(uid, ps, fn){
+  ups <- cbind(uid, ps)
+  colnames(ups) <- c("UserID", "Probability1")
+  write.csv(ups, file=fn, row.names=FALSE)
+}
+
+
+X <- compData[, svord]
+Y <- compData$Happy
+varIndex <- list()
+n <- 1
+for(q in colnames(X)){
+  varIndex[[q]] <- n:(n+length(levels(X[,q]))-1)
+  n <- n + length(levels(X[, q]))
+}
+findIndices <- function(predictors){
+  do.call("c", lapply(predictors, function(q) varIndex[[q]]))
+}
+
+dummyXY <- as.data.frame(do.call("cbind", (lapply(X, function(x)makeDummy(x, as.logi=FALSE)))))
+dummyXY$Y <- Y  
+dummyNames <- colnames(dummyXY)
+
+glm.var.auc.cv <- sapply(2:20, function(i) {
+  analyseVariablesWithCrossValidation(dummyXY, dummyNames[ findIndices(svord[1:i])], auc=TRUE)
+})
+
+#forward selection
+for(i in 1:10){
+  ints1to15 <- sapply(1:14, function(i) sapply((i+1):15, function(j)  analyseInteractionWithCrossValidation(dummyXY.master, append(interactions, list(c(i,j))), varIndex, 1:15, auc=TRUE)  ))
+  i <- which.max(lapply(ints1to15, max))
+  j <- i + which.max(ints1to15[[i]])
+  interactions <- append(interactions, list(c(i,j)))
+}

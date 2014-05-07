@@ -1,0 +1,510 @@
+---
+title: "Interacting Variables"
+output: html_document
+---
+Time now to play with interactions
+```{r dataIn}
+compData <- read.csv("train.csv")
+questions <- colnames(compData)[9:109]
+library(caTools)
+set.seed(101)
+split <- sample.split( compData$Happy, SplitRatio = 0.7)
+compTrain <- subset(compData, split==TRUE)
+compTest <- subset(compData, split==FALSE)
+library(cluster)
+tabacc <- function(tb) sum(diag(tb))/sum(tb)
+```
+Levels in the data, 
+```{r qlevels}
+
+qlevels <- t(sapply(questions, function(q) levels(compData[,q])))
+rownames(qlevels) <- questions
+hlevels <- levels(compData$HouseholdStatus)
+
+```
+
+```{r natureOfTheQuestions}
+qidx <- read.csv("questions.csv", stringsAsFactors=FALSE)$Index
+qs <- read.csv("questions.csv", stringsAsFactors=FALSE)$Question
+qs <- gsub(pattern="/", replacement=" ", qs)
+qs <- gsub(pattern="-", replacement=" ", qs)
+library(tm)
+library(SnowballC)
+corpus <- Corpus(VectorSource(qs))
+corpus <- tm_map(corpus, tolower)
+corpus <- tm_map(corpus, removePunctuation)
+corpus <- tm_map(corpus, removeWords, stopwords("english") ) 
+capFirstLetter <- function(x) paste(toupper(substring(x, 1,1)), substring(x, 2), sep="")
+
+qlists <- lapply(corpus, function(x) Filter(function(s) s != "", unlist(strsplit(x, " ", fixed=TRUE))))
+qsAbrv <- unlist(lapply(qlists, function(xs) paste(Map(capFirstLetter, xs), collapse = "") ))
+
+choices <- read.csv("questions.csv", stringsAsFactors=FALSE)$Choices
+qsans <- as.matrix(cbind( qsAbrv, choices))
+```
+Some useful code
+```{r groupStatsByLevel}
+happyMean <- function(comp) mean(comp$Happy)
+computeGroupMeanByLevel <- function(q, comp){
+  m <- sapply(levels( comp[ , q]), 
+           function(l) {
+             s <- sum( comp$Happy[ comp[, q] == l])
+             n <- sum(comp[,q]==l)
+             if (s==0) 0 else (s/n)
+          }
+      )
+  m
+}
+computeGroupSdByLevel <- function(q, comp){
+  s <-  sapply(levels( comp[ , q]), 
+           function(l) {
+             s <- sum( comp$Happy[ comp[, q] == l])
+             if (s==0) 0 else sd( comp$Happy[comp[,q] == l])
+          }
+        )
+  s
+}
+computeGroupSizesByLevel<- function(q, comp){
+  s <- sapply(levels( comp[ , q]), function(l) sum( comp[,q] == l))
+  s
+}
+computeGroupMeanSdsByLevel <- function(q, comp) {
+  sqrt(2*computeGroupMeanByLevel(q, comp)/computeGroupSizesByLevel(q, comp))
+}
+
+
+energyFromMean <- function(m) -log(m/(1-m))
+
+probFromEnergies <- function(es, hmean) {
+  e0 <- -log(hmean/(1-hmean))
+  totE <- sum( es - e0) + e0
+  1/(1 + exp(totE))
+}
+
+computeGroupEnergyByLevel <- function(q, comp){
+  energyFromMean( computeGroupMeanByLevel(q, comp))
+}
+```
+To compute total energy of a state-vector, we will need access to the energy levels in each state component. Because the state components do not have the same number of levels, we will have to represent their energies in a list carrying the variable names. Lets start by extracting level statistics
+```{r statDefs}
+hmean <- happyMean(compTrain)
+groupMeans.1 <- lapply(c(questions, "HouseholdStatus"), function(q) computeGroupMeanByLevel(q, compTrain))
+names(groupMeans.1) <- c(questions, "HouseholdStatus")
+groupSizes.1 <- lapply(c(questions, "HouseholdStatus"), function(q) computeGroupSizesByLevel(q, compTrain))
+names(groupSizes.1) <- c(questions, "HouseholdStatus")
+groupMeanSds.1 <- lapply(c(questions, "HouseholdStatus"),  function(q) computeGroupMeanSdsByLevel(q, compTrain))
+names(groupMeanSds.1) <- c(questions, "HouseholdStatus")
+groupEnergies.1 <- lapply(groupMeans.1, function(m) energyFromMean(m))
+groupZs.1 <- lapply(1:length(groupMeans.1), function(i) (groupMeans.1[[i]] - hmean)/groupMeanSds.1[[i]])
+names(groupZs.1) <- c(questions, "HouseholdStatus")
+vs.1 <- c(questions, "HouseholdStatus")
+```
+Lets order the groupEnergies to determine which one is the best discriminant
+```{r svord}
+singleVariables <- c(questions, "HouseholdStatus")
+ge <- groupEnergies.1
+spread <- function(es) max(es) - min(es)
+svord <- singleVariables[order(sapply(ge, spread), decreasing=TRUE)]
+dscrmMean <- function(m, s) {
+  imax <- which.max(m)
+  imin <- which.min(m)
+  m[imax] - s[imax] - (m[imin] + s[imin])
+}
+
+```
+```
+
+These are used to compute the total energy
+```{r totalEnergyAndProbHappy}
+
+totalEnergy <- function(anss, ge, hmean){ #anss is a vector of factor variables
+  qns <- names(anss)
+  levs <- as.numeric(anss)
+  sum(sapply(names(anss), function(q) ge[[q]][anss[[q]]])) - log(hmean/(1-hmean))
+}
+
+probHappy <- function(anss, ge, hmean) 1/(1+exp(totalEnergy(anss, ge, hmean)))
+```
+Lets write a function to run regression using energies
+```{r energyLinearModel}
+elm <- function(response, predictors, data, beta = 1, beta0 = 1, ym = 0.5){ #beta parameterizes Poisson conjugate Gamma
+  model <- list()
+  model$response <- response
+  model$predictors <- predictors
+  model$data <- data
+  R <- data[, response]
+  Qs <- as.data.frame(data[, predictors])
+  colnames(Qs) <- predictors
+  statistics <- list()
+  statistics$N <- nrow(Qs)
+  statistics$M <- ncol(Qs)
+  statistics$ymean <- (sum(R) + beta0*ym)/(length(R) + beta0)
+  statistics$groupMeans <- lapply(Qs, function(x){
+    sapply(levels(x), function(l){
+       s <- sum( R[ x == l])
+       n <- sum(x==l)
+       (s + beta*statistics$ymean)/(n + beta)
+    })
+  })  
+  statistics$groupSizes <- lapply(Qs, function(x){
+    sapply(levels(x), function(l){
+      sum(x==l)
+    })
+  })
+  statistics$groupMeanSds <- lapply(1:statistics$M, function(i){
+    sqrt(2*statistics$groupMeans[[i]]/statistics$groupSizes[[i]])
+  })
+  names(statistics$groupMeanSds) <- predictors
+  
+  statistics$groupZs <- lapply(1:statistics$M, function(i){
+    (statistics$groupMeans[[i]] - statistics$ymean)/statistics$groupMeanSds[[i]]
+  })
+  names(statistics$groupZs) <- predictors
+  
+  statistics$groupEnergies <- lapply(statistics$groupMeans, function(m) -log(m/(1-m)) )
+  
+  statistics$groupEnergySds <- lapply(1:statistics$M, function(i){
+    statistics$groupMeanSds[[i]]/(statistics$groupMeans[[i]]*(1-statistics$groupMeans[[i]]))
+  })
+  names(statistics$groupEnergySds) <- predictors
+  model$statistics <- statistics
+  model
+}
+
+predict.elm <- function(model, newdata){
+  tes <- do.call("cbind", lapply( model$predictors, function(q){
+    model$statistics$groupEnergies[[q]][newdata[, q]]
+  }))
+  rownames(tes) <- rownames(newdata)
+  apply(tes, 1, function(es)probFromEnergies(es, model$statistics$ymean))
+}
+```
+
+
+
+
+###Interactions
+```{r interaction}
+
+makeFactorInteraction <- function(cd){ # assuming two columns of factors
+  uv <- list(sapply(1:nrow(cd), function(i) paste(as.character(cd[i,1]), as.character(cd[i,2]), sep=".")))
+  names(uv) <- paste(colnames(cd)[1], colnames(cd)[2], sep=".")
+  as.data.frame(uv)
+}
+```
+Examples
+```{r interactionExamples}
+compareIndpInter <- function(ctr, cts, vs){
+  X12.train.indp <- ctr[ vs]
+  X12.train.indp$Happy <- ctr$Happy
+  X12.test.indp <- cts[, vs]
+  X12.test.indp$Happy <- cts$Happy
+  X12.indp.elm <- elm("Happy", vs, data=X12.train.indp)
+  acc.indp.train <- tabacc( table(X12.train.indp$Happy, predict.elm(X12.indp.elm, newdata=X12.train.indp) > 0.5))
+  acc.indp.test <- tabacc( table(X12.test.indp$Happy, predict.elm(X12.indp.elm, newdata=X12.test.indp) > 0.5))
+  
+  X12.train.int <- makeInteraction(ctr[, vs])
+  X12.train.int$Happy <- ctr$Happy
+  X12.test.int <- makeInteraction(cts[, vs])
+  X12.test.int$Happy <- cts$Happy
+  X12.int.elm <- elm( "Happy", colnames(X12.train.int)[1], data=X12.train.int )
+  acc.int.train <- tabacc(table( X12.train.int$Happy, predict.elm( X12.int.elm, newdata = X12.train.int) > 0.5))
+  acc.int.test <- tabacc(table( X12.test.int$Happy, predict.elm( X12.int.elm, newdata = X12.test.int) > 0.5))
+  c( indpTrain=acc.indp.train, indpTest=acc.indp.test, intTrain=acc.int.train, intTest=acc.int.test)
+}
+
+
+  
+```
+We find only a marginal improvement of the results when we include interactions. Whats the reason? Lets try to compute the mutual information between the variables.
+##Correlations, mutual information
+```{r}
+probLevels.singleVariable <- function(q, cd){
+  sapply(levels(cd[,q]), function(l) sum(cd[, q] == l))/nrow(cd)
+}
+entropy <- function(m, base=2) -sum(m*log(m)/log(base))
+
+computeMutualInformation <- function(varsToInteract, data){
+  n <- length(varsToInteract)
+  h1s <- sapply(varsToInteract, function(v) entropy(probLevels.singleVariable(v, data),3))
+  mis <- sapply(1:(n-1), function(i) {
+    v1 <- varsToInteract[i]
+    sapply((i+1):n, function(j){
+      v2 <- varsToInteract[j]
+      #v12 <- paste(v1, v2, sep=".")
+      #H12 <- entropy(probLevels.singleVariable( v12, data),3)
+      iv <- makeInteraction( data[, varsToInteract])
+      H12 <- entropy(probLevels.singleVariable(colnames(iv)[1], iv  ), 3)
+      H1 <- entropy(probLevels.singleVariable(v1, data),3)
+      H2 <- entropy(probLevels.singleVariable(v2, data), 3)
+      H1 + H2 - H12
+    })
+  })
+  mismat <- matrix(0, nrow=n, ncol=n)
+  for(i in 1:(n-1)){
+    mismat[i,i] <- h1s[i]
+    for(j in (i+1):n){
+      mismat[i,j] <- mis[[i]][j-i]
+      mismat[j,i] <- mismat[i,j]
+    }
+  }
+  mismat[n,n] <- h1s[n]
+  mismat
+}
+```
+```{r entropyExamples}
+computeMutualInformation(svord[c(1,2,4,5,6,7,8,9)], data=compData)
+computeMutualInformation(svord[c(1,2,4,5,6,7,8,9)], data=compData[compData$Happy==1,])
+computeMutualInformation(svord[c(1,2,4,5,6,7,8,9)], data=compData[compData$Happy==0,])
+```
+There does not seem to be much mutual information between the variables!
+
+##Clustering
+Can we improve our predictions? Lets turn to clustering again. For this we will use the R package daisy to compute dissimilarities between rows.
+```{r}
+disBwnFactors <- function(x,y) sum(x!=y) #Hamming distance
+#cd.train.dist <- as.dist(do.call("cbind", lapply(1:n, function(i){
+  #ds <- rep(0, n)
+  #if (i < n) {ds[(i+1):n] <- sapply((i+1):nrow(cd), function(j) sum( cd[i, varsToCluster] != cd[j, varsToCluster]))}
+  #ds
+#})))
+#cd.train.dist[n,] <- rep(0,n)
+
+varsToCluster <- svord[1:10]
+varsToTrain <- svord[1:4]
+cd.dist <- as.matrix(daisy(compData[, varsToCluster]))
+cd.test.dist.totrain <- cd.dist[rownames(compTest), rownames(compTrain)]
+cd.train.dist <- daisy(compTrain[, varsToCluster])
+
+cd.train.hclu <- hclust( cd.train.dist, method="ward")
+k = 16
+cd.train.hcluCut <- cutree(cd.train.hclu, k = k)
+hapsize <- t(sapply(1:k, function(i) c(happiness=mean(compTrain$Happy[cd.train.hcluCut == i]), size=sum(cd.train.hcluCut==i))))
+
+acc.train.c <- sapply(1:k, function(i){
+  cluster.elm <- elm("Happy", varsToTrain, compTrain[cd.train.hcluCut==i, c(varsToTrain, "Happy")], beta=1., beta0=1, ym=hmean)
+  pred.clu <- predict.elm(cluster.elm, newdata=compTrain[cd.train.hcluCut==i, c(varsToTrain, "Happy")])
+  tabacc(table(compTrain$Happy[cd.train.hcluCut==i], pred.clu > 0.5))
+})
+
+compTrain.elm <- elm("Happy", varsToTrain, compTrain[, c(varsToTrain, "Happy")], beta=1, beta0=1, ym=0.5)
+acc.train.o <- sapply(1:k, function(i){
+  pred.clu <- predict.elm(compTrain.elm, newdata=compTrain[cd.train.hcluCut==i, c(varsToTrain, "Happy")])
+  cutoff <- mean(compTrain$Happy[cd.train.hcluCut == i]) 
+  #cutoff <- mean(compTrain$Happy)
+  #cutoff <- 0.5
+  tabacc(table(compTrain$Happy[cd.train.hcluCut==i], pred.clu > cutoff))
+})
+hapsizeacc <- cbind(hapsize, acc.train.c, acc.train.o)
+hapsizeacc
+sum( hapsizeacc[,1]*hapsizeacc[,2])/sum(hapsizeacc[,2])
+sum( hapsizeacc[,3]*hapsizeacc[,2])/sum(hapsizeacc[,2])
+sum( hapsizeacc[,4]*hapsizeacc[,2])/sum(hapsizeacc[,2])
+```
+
+###Predicting clusters using k nearest neighbors
+The algorithm can be implemented simply
+```{r}
+knnClusterPredict <- function(clusters, distances, k){
+  if( class(distances) == "list"){
+    lapply(distances, function(d) names(which.max(table(clusters[names(sort(d))[1:k]]))))
+  }
+  else{ #assuming matrix
+    apply(distances, 1, function(d) names(which.max(table(clusters[names(sort(d))[1:k]]))) )  
+  }
+}
+cd.train.clusters.predicted <- as.numeric(do.call("c", knnClusterPredict( cd.train.hcluCut, cd.train.dist.list, 3)))
+acc.train.c.pred <- sapply(1:k, function(i){
+  cluster.elm <- elm("Happy", varsToTrain, compTrain[cd.train.hcluCut==i, c(varsToTrain, "Happy")], beta=0.01, beta0=1, ym=hmean)
+  pred.clu <- predict.elm(cluster.elm, newdata=compTrain[cd.train.clusters.predicted==i, c(varsToTrain, "Happy")])
+  tabacc(table(compTrain$Happy[cd.train.clusters.predicted==i], pred.clu > 0.5))
+})
+hapsizeacc.pred <- cbind(hapsizeacc, acc.train.c.pred)
+sum( hapsizeacc.pred[,5]*hapsizeacc[,2])/sum(hapsizeacc[,2])
+
+```
+Excellently works for the training set. For the test set!
+
+```{r}
+
+kn <- 5
+cd.test.clusters.predicted <- as.numeric( knnClusterPredict( cd.train.hcluCut, cd.test.dist.totrain, kn))
+cd.train.clusters.predicted <- as.numeric(do.call("c", knnClusterPredict( cd.train.hcluCut, cd.train.dist.list, kn)))
+
+#models
+cd.train.hcluCut.elms <- lapply(1:k, function(i) elm("Happy", varsToTrain, compTrain[cd.train.hcluCut==i, c(varsToTrain, "Happy")], beta=2., beta0=1, ym=hmean))
+cd.test.preds <- sapply(1:nrow(compTest), function(i) predict.elm( cd.train.hcluCut.elms[[cd.test.clusters.predicted[i]]], newdata=compTest[i, c(varsToTrain, "Happy")]))
+cd.train.preds <- sapply(1:nrow(compTrain), function(i) predict.elm( cd.train.hcluCut.elms[[cd.train.clusters.predicted[i]]], newdata=compTrain[i, c(varsToTrain, "Happy")]))
+tabacc( table( compTrain$Happy, cd.train.preds > 0.5))
+tabacc(table(compTest$Happy, cd.test.preds > 0.5))
+
+accuraciesTestTrainClustered <- function(i, vs){
+  X12.train.indp <- compTrain[cd.train.hcluCut==i, vs]
+  X12.train.indp$Happy <- compTrain$Happy[cd.train.hcluCut==i]
+  X12.test.indp <- compTest[cd.test.clusters.predicted==i, vs]
+  X12.test.indp$Happy <- compTest$Happy[cd.test.clusters.predicted==i]
+  X12.indp.elm <- elm("Happy", vs, data=X12.train.indp)
+  acc.indp.train <- tabacc( table(X12.train.indp$Happy, predict.elm(X12.indp.elm, newdata=X12.train.indp) > 0.5))
+  acc.indp.test <- tabacc( table(X12.test.indp$Happy, predict.elm(X12.indp.elm, newdata=X12.test.indp) > 0.5))
+  c(size.train=sum(cd.train.hcluCut==i), acc.train=acc.indp.train, size.test=sum(cd.test.clusters.predicted==i), acc.test=acc.indp.test)
+}
+```
+Test set always sucks. One last thing up my sleeve. Mix the test data into the train data to cluster, but not to predict
+```{r}
+varsToCluster <- svord[1:102]
+cd.dist <- daisy(compData[, c("Income", "EducationLevel", "Gender", varsToCluster)])
+cd.hclu <- hclust( cd.dist, method="ward")
+k = 16
+cd.hcluCut <- cutree(cd.hclu, k = k)
+names(cd.hcluCut) <- rownames(compData)
+varsToTrain <- svord[1:6]
+clusters.train <- cd.hcluCut[rownames(compTrain)]
+clusters.test <- cd.hcluCut[rownames(compTest)]
+cd.hcluCut.elms <- lapply(1:k, function(i) elm("Happy", varsToTrain, compTrain[clusters.train==i, c(varsToTrain, "Happy")], beta=2., beta0=1, ym=hmean))
+cd.test.preds <- sapply(1:nrow(compTest), function(i) predict.elm( cd.hcluCut.elms[[clusters.test[i]]], newdata=compTest[i, c(varsToTrain, "Happy")]))
+cd.train.preds <- sapply(1:nrow(compTrain), function(i) predict.elm( cd.hcluCut.elms[[clusters.train[i]]], newdata=compTrain[i, c(varsToTrain, "Happy")]))
+tabacc( table( compTrain$Happy, cd.train.preds > 0.5))
+tabacc(table(compTest$Happy, cd.test.preds > 0.5))
+
+```
+###Kmeans for categorical data
+The centroid cannot be computed, but it can be defined ! Distance of a point $j$ to a cluster centroid can be replaced  by the mean of the distance of $j$ to each of the points in the cluster.!!!
+
+
+Some olde code
+```{r}
+varsToInteract <- c(svord[1:2], svord[4:8])
+n <- length(varsToInteract)
+compDataIntVars <- data.frame(do.call("cbind", lapply(1:(n-1), function(i){ do.call("cbind", lapply((i+1):n, function(j) interactionVariable(compData[, varsToInteract[i]], compData[, varsToInteract[j]]))))))
+ivs.2 <-  do.call("c", c(sapply( 1:(n-1), function(i) sapply((i+1):n, function(j) paste(varsToInteract[i], varsToInteract[j], sep="."))) ))
+colnames(compDataIntVars) <- ivs.2
+
+compDataIntVars <- lapply(1:(n-1), function(i) do.call("cbind", lapply((i+1):n, function(j) makeInteraction(compData[, varsToInteract[c(i, j)]]))))
+compDataIntVars <- data.frame( do.call("cbind", compDataIntVars))
+compDataIntVars$Happy <- compData$Happy
+
+cdivs.train <- subset(compDataIntVars, split==TRUE)
+cdivs.test <- subset(compDataIntVars, split==FALSE)
+
+cd.train <- cbind(cdivs.train, compTrain[, c(varsToInteract, "HouseholdStatus")])
+cd.test <- cbind(cdivs.test, compTest[, c(varsToInteract, "HouseholdStatus")])
+ivs <- c(ivs.2, c(varsToInteract, "HouseholdStatus"))
+```
+
+
+Let us do some analysis on the interacting variables.
+```{r}
+hmean <- happyMean(cd.train)
+groupMeans <- lapply(ivs, function(q) computeGroupMeanByLevel(q, cd.train))
+names(groupMeans) <- ivs
+groupSizes <- lapply(ivs, function(q) computeGroupSizesByLevel(q, cd.train))
+names(groupSizes) <- ivs
+groupMeanSds <- lapply(ivs, function(q) computeGroupMeanSdsByLevel(q, cd.train))
+names(groupMeanSds) <- ivs
+groupEnergies <- lapply(groupMeans, function(m) energyFromMean(m, hmean))
+groupZs <- lapply(1:length(groupMeans), function(i) (groupMeans[[i]] - hmean)/groupMeanSds[[i]])
+names(groupZs) <- ivs
+
+
+bivStats <- function(i){
+  m <- which.max(groupZs[[i]])
+  c(sum(groupMeans[[i]][(1:9)[-5]]*groupSizes[[i]][(1:9)[-5]])/sum(groupSizes[[i]][(1:9)[-5]]), groupMeans[[i]][m], groupMeanSds[[i]][m])
+}
+makeBivariate <- function(i,  vs, gZs, cd){
+  m <- which.max(abs(gZs[[vs[i]]]))
+  nv <- sapply(cd[, vs[i]], function(x) (x == names(m)))
+  as.factor(nv)
+}
+
+cdbv.train <- data.frame(do.call("cbind", lapply(1:21, function(i) makeBivariate(i, cdivs.train))))
+cdbv.train$Happy <- cdivs.train$Happy
+cdbv.test <- data.frame(do.call("cbind", lapply(1:21, function(i) makeBivariate(i, cdivs.test))))
+cdbv.test$Happy <- cdivs.test$Happy
+cdbv.train <- cbind(cdbv.train, compTrain[, c(varsToInteract, "HouseholdStatus")])
+cdbv.test <- cbind(cdbv.test, compTest[, c(varsToInteract, "HouseholdStatus")])
+              
+  
+  
+  
+                                             
+```
+
+
+  
+
+Warm up on the single variables
+```{r}
+tabacc <- function(tb) sum(diag(tb))/sum(tb)
+ivs1 <- c(svord[1:5]) #, "HouseholdStatus")
+prob1.train <- sapply(1:nrow(compTrain), function(i) probHappy(compTrain[i, ivs1], ge=groupEnergies.1, hmean=hmean))
+prob1.test <- sapply(1:nrow(compTest), function(i) probHappy(compTest[i, ivs1], ge=groupEnergies.1, hmean=hmean))
+tb.train <- table(compTrain$Happy, prob1.train > 0.5)
+tb.test <- table(compTest$Happy, prob1.test > 0.5)
+tabacc(tb.train)
+tabacc(tb.test)
+```
+For interacting variables
+```{r}
+prob.train <- sapply(1:nrow(cd.train), function(i) probHappy(cd.train[i, ivs], ge=groupEnergies, hmean=hmean))
+prob.test <- sapply(1:nrow(cd.test ), function(i) probHappy(cd.test [i, ivs], ge=groupEnergies, hmean=hmean))
+tb.train <- table(cdivs.train$Happy, prob.train > 0.5)
+tb.test <- table(cdivs.test$Happy, prob.test > 0.5)
+tabacc(tb.train)
+tabacc(tb.test)
+```
+Tree
+```{r}
+cd2.tree <- rpart( Happy ~ ., cd.train, method="class")
+cd2.tree.pred <- predict(cd2.tree, newdata=cd.test, type="class")
+tabacc( table(cd.test$Happy, cd2.tree.pred ))
+                     
+```
+
+Plot means and sds
+
+```{r}
+n <- 1
+cols <- c("orange1", "orange2", "orange3", "orange4", "red1", "red2", "red3", "red4", "orangered")
+cols <- c("red", "green", "blue", "orange", "yellow", "magenta", "brown", "cyan", "black")
+plot(groupMeans[[n]], col=cols, pch=19, ylim=c(0,1))
+abline(h = groupMeans[[n]] - groupMeanSds[[n]], col=cols)
+abline(h = groupMeans[[n]] + groupMeanSds[[n]], col=cols)
+
+
+###Are the questions independent?
+
+```{r}
+iv.gems.1 <- do.call("rbind", lapply( 11:15, function(i) sapply(levels(ivs.train[,i]), function(l) mean( ivs.train[ ivs.train[,i] == l, 16])/h)))
+iv.Pgh.1 <- iv.gems.1/rowSums(iv.gems.1)
+iv.lPgh.1 <- -log(iv.Pgh.1)
+rownames(iv.lPgh.1) <- colnames(ivs.train)[11:15]
+
+iv.gems.2 <- do.call("rbind", lapply( 1:10, function(i) sapply(levels(ivs.train[,i]), function(l) mean( ivs.train[ ivs.train[,i] == l, 16])/h)))
+iv.Pgh.2 <- iv.gems.2/rowSums(iv.gems.2)
+iv.lPgh.2 <- -log(iv.Pgh.2)
+rownames(iv.lPgh.2) <- colnames(ivs.train)[1:10]
+
+indepLogProb <- function(i, j){
+  e <- c(sapply(1:3, function(l) sapply(1:3, function(m) iv.lPgh.1[i,l] + iv.lPgh.1[j,m])))
+  names(e) <- c(sapply(levels(comp[,rownames(iv.lPgh.1)[i]]), function(l) sapply( levels(comp[, rownames(iv.lPgh.1)[j]]), function(m) paste(l,m))))
+  e
+}
+iv.lPgh.2.ind <- do.call("rbind", lapply(1:4, function(i) do.call("rbind", lapply((i+1):5, function(j) indepLogProb(i,j)))))
+
+entropy <- function(p) -sum(p*log(p)/log(2))
+
+mi <- sapply(1:10, function(i) entropy( exp(-iv.lPgh.2[i, ])) - entropy(exp(-iv.lPgh.2.ind[i,])))
+
+iv.Phg.1 <-  do.call("rbind", lapply( 11:15, function(i) sapply(levels(ivs.train[,i]), function(l) mean( ivs.train[ ivs.train[,i] == l, 16]))))
+rownames(iv.Phg.1) <- colnames(ivs.train)[11:15]
+
+iv.Phg.2 <- do.call("rbind", lapply( 1:10, function(i) sapply(levels(ivs.train[,i]), function(l) mean( ivs.train[ ivs.train[,i] == l, 16]))))
+rownames(iv.Phg.2) <- colnames(ivs.train)[1:10]
+
+e12 <- t(apply(iv.Phg.2, 1, function(m) -log(m/(1-m))))
+rownames(e12) <- colnames(ivs.train)[1:10]
+```
+
+
+
+```

@@ -1,0 +1,24 @@
+Title
+========================================================
+
+Cross validation
+```{r}
+glmcv <- function(response, predictors, data, auc=FALSE, retfun = mean){
+  N <- nrow(data)
+  rindexShuffled <- sample(1:N, N, replace=FALSE)
+  cvistop <- (1:4)*floor(N/5)
+  cvistart <- c(1, cvistop+1)
+  cvistop <- c(cvistop, N)
+  retfun(sapply(1:5, function(k) {
+      testidx <- rindexShuffled[cvistart[k]:cvistop[k]]
+      test <- data[ testidx, ]
+      train <- data[-testidx, ]
+      f <-  paste(response, " ~ .", sep = "")
+      xy.glm <- glm(formula=f, data=train[, c(predictors, response)], family="binomial")
+      glm.pred <- predict(xy.glm, newdata=test[, c(predictors, response)], type="response")
+      if(!auc) tabacc( table(test[,response], glm.pred > 0.5))
+      else performance(prediction(glm.pred, test[,response]), "auc")@y.values[[1]]
+    })
+  )
+}
+```
