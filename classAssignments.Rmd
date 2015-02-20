@@ -1,0 +1,159 @@
+Title class preferences
+========================================================
+```{r data}
+cass <- read.csv2("ClassAssignments.csv")
+colnames(cass) <- c("Student", "Pref1", "Pref2", "MF")
+prefs <- t(cass[,c(2,3)])
+boy <- as.numeric(cass[,4] == "M")
+#prefs[which(prefs==2)] <- 0
+S <- ncol(prefs)
+C <- nrow(prefs)
+# one class
+oneClassI <- lapply(1:S, function(j) {1:C  + (j-1)*C })
+oneClassV <-  lapply(1:S, function(j) rep(1, C))
+#numStu
+numStuI <- lapply(1:C, function(i){ i + (1:S - 1)*C})
+numStuV <- lapply(1:C, function(i) rep(1, S))
+
+#numBoys
+numBoysI <- lapply(1:C, function(i){i + (1:S - 1)*C})
+numBoysV <- lapply(1:C, function(i) boy)
+
+unsat <- as.vector(prefs)
+
+```
+```{ r model}
+library(lpSolveAPI)
+lpm <- make.lp( S + C, C*S)
+
+constrainIndices <- c(oneClassI, numStuI)
+constrainValues <- c(oneClassV, numStuV)
+
+constrainMat <- matrix(0, nrow=S + C, ncol=C*S)
+for( i in 1:(S+C))  constrainMat[i, constrainIndices[[i]]] <- constrainValues[[i]]
+
+for(j in 1:(S*C)) set.column(lpm, j, constrainMat[, j])
+set.objfn(lpm, as.vector(prefs))
+set.constr.type(lpm, c(rep("=", S), rep("=", C)))
+set.rhs(lpm, c(rep(1, S), rep(20, C)))
+lp.control(lpm, sense="min")
+for(i in 1:(C*S)) set.type(lpm, i, "binary")
+
+write.lp(lpm, 'classAssignments.lp', type='lp')
+solve(lpm)
+get.objective(lpm)
+```
+
+Boys
+```{ r modelConstrainBoys}
+library(lpSolveAPI)
+lpm <- make.lp( S + 2*C, C*S)
+
+constrainIndices <- c(oneClassI, numStuI, numBoysI)
+constrainValues <- c(oneClassV, numStuV, numBoysV)
+
+constrainMat <- matrix(0, nrow=S + 2*C, ncol=C*S)
+for( i in 1:(S+2*C))  constrainMat[i, constrainIndices[[i]]] <- constrainValues[[i]]
+
+for(j in 1:(S*C)) set.column(lpm, j, constrainMat[, j])
+set.objfn(lpm, as.vector(prefs))
+set.constr.type(lpm, c(rep("=", S), rep("=", C), rep("<=", C)))
+set.rhs(lpm, c(rep(1, S), rep(20, C), rep(12, C)))
+lp.control(lpm, sense="min")
+for(i in 1:(C*S)) set.type(lpm, i, "binary")
+
+write.lp(lpm, 'classAssignments.lp', type='lp')
+solve(lpm)
+get.objective(lpm)
+```
+
+Twins
+```{ r twins}
+library(lpSolveAPI)
+lpm <- make.lp( S + 2*C + 2, C*S)
+
+twinI <- list(c(19, 21), c(20, 22))
+twinV <- list(rep(1,2), rep(1,2))
+
+constrainIndices <- c(oneClassI, numStuI, numBoysI, twinI)
+constrainValues <- c(oneClassV, numStuV, numBoysV, twinV)
+
+constrainMat <- matrix(0, nrow=S + 2*C + 2, ncol=C*S)
+for( i in 1:(S+2*C + 2))  constrainMat[i, constrainIndices[[i]]] <- constrainValues[[i]]
+
+for(j in 1:(S*C)) set.column(lpm, j, constrainMat[, j])
+set.objfn(lpm, as.vector(prefs))
+set.constr.type(lpm, c(rep("=", S), rep("=", C), rep("<=", C), rep("=", 2)))
+set.rhs(lpm, c(rep(1, S), rep(20, C), rep(12, C), rep(1,2)))
+lp.control(lpm, sense="min")
+for(i in 1:(C*S)) set.type(lpm, i, "binary")
+
+write.lp(lpm, 'classAssignments.lp', type='lp')
+solve(lpm)
+get.objective(lpm)
+```
+
+```{ r neighborhood}
+library(lpSolveAPI)
+neighStus <- c(4,9, 15, 25, 30, 36)
+lpm <- make.lp( S + 2*C + 2 + 2, C*S)
+
+twinI <- list(c(19, 21), c(20, 22))
+twinV <- list(rep(1,2), rep(1,2))
+
+neighI <- lapply(1:C, function(i){i + (neighStus-1)*C})
+neighV <-  lapply(1:C, function(i) rep(1, length(neighStus)))
+
+constrainIndices <- c(oneClassI, numStuI, numBoysI, twinI, neighI)
+constrainValues <- c(oneClassV, numStuV, numBoysV, twinV, neighV)
+
+constrainMat <- matrix(0, nrow=S + 2*C + 2 + 2, ncol=C*S)
+for( i in 1:(S+2*C + 2 + 2))  constrainMat[i, constrainIndices[[i]]] <- constrainValues[[i]]
+
+for(j in 1:(S*C)) set.column(lpm, j, constrainMat[, j])
+set.objfn(lpm, as.vector(prefs))
+set.constr.type(lpm, c(rep("=", S), rep("=", C), rep("<=", C), rep("=", 2), rep(">=", 2)))
+set.rhs(lpm, c(rep(1, S), rep(20, C), rep(12, C), rep(1,2), rep(2, 2)))
+lp.control(lpm, sense="min")
+for(i in 1:(C*S)) set.type(lpm, i, "binary")
+
+write.lp(lpm, 'classAssignments.lp', type='lp')
+solve(lpm)
+get.objective(lpm)
+```
+
+```{ r therapist}
+library(lpSolveAPI)
+neighStus <- c(4,9, 15, 25, 30, 36)
+lpm <- make.lp( S + 2*C + 2 + 2 +  5, C*S)
+
+twinI <- list(c(19, 21), c(20, 22))
+twinV <- list(rep(1,2), rep(1,2))
+
+neighI <- lapply(1:C, function(i){i + (neighStus-1)*C})
+neighV <-  lapply(1:C, function(i) rep(1, length(neighStus)))
+
+stu1I <- list(c(1),c(2))
+stu1V <- list(c(1), c(1))
+stu40I <- list(c(79),c(80))
+stu40V <- list(c(1),c(1))
+stu20.21I <- list(c(39,42))
+stu20.21V <- list(c(1))
+
+constrainIndices <- c(oneClassI, numStuI, numBoysI, twinI, neighI, stu1I, stu40I, stu20.21I)
+constrainValues <- c(oneClassV, numStuV, numBoysV, twinV, neighV, stu1V, stu40V, stu20.21V)
+
+constrainMat <- matrix(0, nrow=S + 2*C + 2 + 2 + 5, ncol=C*S)
+for( i in 1:(S+2*C + 2 + 2 + 5))  constrainMat[i, constrainIndices[[i]]] <- constrainValues[[i]]
+
+for(j in 1:(S*C)) set.column(lpm, j, constrainMat[, j])
+set.objfn(lpm, as.vector(prefs))
+set.constr.type(lpm, c(rep("=", S), rep("=", C), rep("<=", C), rep("=", 2), rep(">=", 2), rep("=", 5)))
+set.rhs(lpm, c(rep(1, S), rep(20, C), rep(12, C), rep(1,2), rep(2, 2), c(0,1), c(0,1), c(1)))
+lp.control(lpm, sense="min")
+for(i in 1:(C*S)) set.type(lpm, i, "binary")
+
+write.lp(lpm, 'classAssignments.lp', type='lp')
+solve(lpm)
+get.objective(lpm)
+```

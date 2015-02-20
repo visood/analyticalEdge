@@ -10,7 +10,7 @@ glmcv <- function(response, predictors, data, auc=FALSE, retfun = mean){
   cvistart <- c(1, cvistop+1)
   cvistop <- c(cvistop, N)
   retfun(sapply(1:5, function(k) {
-      testidx <- rindexShuffled[cvistart[k]:cvistop[k]]
+      testidx <- rindexShuffled[cvistart[k]:cvistop[k]
       test <- data[ testidx, ]
       train <- data[-testidx, ]
       f <-  paste(response, " ~ .", sep = "")

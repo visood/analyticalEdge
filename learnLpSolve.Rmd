@@ -1,0 +1,50 @@
+Title
+========================================================
+
+A trading company is looking for a way to maximixe profit per transportation of their goods.
+The company has 3 wagons on a train. They have 4 types of cargo, with a given volume and weight. 
+How much of each cargo on which wagon?
+
+Constraints: 
+1. weight capacity per train wagon
+2. volume capacity per train wagon
+3. limited availability per cargo
+
+```{r capacities}
+wagonCapacity <- data.frame(weight=c(10, 8, 12), volume=c(5000, 4000, 8000))
+cargo <- data.frame(available=c(18, 10, 5, 20), volume=c(400, 300, 200, 500), profit=c(2000, 2500, 5000,3500))
+Nw <- nrow(wagonCapacity)
+Nc <- nrow(cargo)
+```
+```{r model}
+library(lpSolveAPI)
+lpmodel <- make.lp(2*nrow(wagonCapacity) + nrow(cargo), 12)
+#constrain variables as a matrix Nw*Nc, coded as a column major vector
+#constraints
+#1.availability
+availIndices <-  lapply(1:Nc, function(j) {1:Nw + Nw*(j-1) })
+availValues <- lapply(1:Nc, function(j) rep(1, Nw))
+#2. weight
+weightIndices <- lapply(1:Nw, function(i) { i + (1:Nc-1)*Nw})
+weightValues <- lapply(1:Nw, function(i) rep(1, Nc))
+#3. volume
+volumeIndices <- weightIndices
+volumeValues <-  lapply(1:Nw, function(i) cargo$volume)
+
+constrainIndices <- c(availIndices, weightIndices, volumeIndices)
+constrainValues <- c(availValues, weightValues, volumeValues)
+
+constrainMat <- matrix(0, nrow=Nc + 2*Nw, ncol=Nc*Nw)
+for( i in 1:(Nc + 2*Nw))  constrainMat[i, constrainIndices[[i]]] <- constrainValues[[i]]
+
+profit <- as.vector(do.call("rbind", lapply(1:Nw, function(i) cargo$profit)))
+  
+for(j in 1:(Nc*Nw)) set.column(lpmodel, j, constrainMat[, j])
+set.objfn(lpmodel, profit)
+set.constr.type(lpmodel, rep("<=", 10))               
+set.rhs(lpmodel, c(cargo$available, wagonCapacity$weight, wagonCapacity$volume))
+lp.control(lpmodel, sense="max")
+
+write.lp(lpmodel, 'wagonCargo.lp', type='lp')
+solve(lpmodel)
+get.objective(lpmodel)

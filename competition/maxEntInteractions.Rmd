@@ -407,6 +407,7 @@ glmModelPredsWithInteractions <- function(dummyXY.train, dummyXY.test,  interact
   xy.glm <- glm(Y ~ ., data=dummyXY.train, family="binomial")
   predict(xy.glm, newdata=dummyXY.test, type="response")
 }
+```
 
 
 
@@ -417,7 +418,7 @@ submission <- function(uid, ps, fn){
 }
 
 
-X <- compData[, svord]
+X <- compData[, c(svord, "Gender", "Income", "EducationLevel")]
 Y <- compData$Happy
 varIndex <- list()
 n <- 1
@@ -433,7 +434,7 @@ dummyXY <- as.data.frame(do.call("cbind", (lapply(X, function(x)makeDummy(x, as.
 dummyXY$Y <- Y  
 dummyNames <- colnames(dummyXY)
 
-dummyXYsubmit.test <- as.data.frame(do.call("cbind", (lapply(compDataSubmit[, svord], function(x)makeDummy(x, as.logi=FALSE)))))
+dummyXYsubmit.test <- as.data.frame(do.call("cbind", (lapply(compDataSubmit[, c(svord, "Gender", "Income", "EducationLevel")], function(x)makeDummy(x, as.logi=FALSE)))))
 
 
 glm.var.auc.cv <- c(glm.var.auc.cv, sapply(50:100, function(i) {
@@ -451,56 +452,6 @@ for(i in 1:10){
 }
 ```
 
-What variables?
-```{r}
-acc.cv <- t(sapply(1:10, function(i) analyseVariablesWithCrossValidation(dummyXY, dummyNames[ findIndices(c(1:6, 8:12, 14, 15, 20, 21))], auc=TRUE, retfun=identity)))
-mean(apply(acc.cv, 1, mean))
-mean(apply(acc.cv, 1, sd))
-acc.cv.6 <- t(sapply(1:100, function(i) analyseVariablesWithCrossValidation(dummyXY, dummyNames[ findIndices(c(1:6, 7:10, 12:15))], auc=TRUE, retfun=identity)))
-mean(apply(acc.cv.6, 1, mean))
-mean(apply(acc.cv.6, 1, sd))
-
-acc.cv.7 <- t(sapply(1:100, function(i) analyseVariablesWithCrossValidation(dummyXY, dummyNames[ findIndices(c(1:15))], auc=TRUE, retfun=identity)))
-mean(apply(acc.cv.7, 1, mean))
-mean(apply(acc.cv.7, 1, sd))
-
-acc.cv.8 <- t(sapply(1:100, function(i) analyseVariablesWithCrossValidation(dummyXY, dummyNames[ findIndices(c(1:6, 8:12, 14:15))], auc=TRUE, retfun=identity)))
-mean(apply(acc.cv.8, 1, mean))
-mean(apply(acc.cv.8, 1, sd))
-
-
-acc.cv.9 <- t(sapply(1:100, function(i) analyseVariablesWithCrossValidation(dummyXY, dummyNames[ findIndices(c(1:6, 8:12, 14, 15, 20, 21))], auc=TRUE, retfun=identity)))
-mean(apply(acc.cv.9, 1, mean))
-mean(apply(acc.cv.9, 1, sd))
-
-acc.cv.10 <- t(sapply(1:100, function(i) analyseVariablesWithCrossValidation(dummyXY, dummyNames[ findIndices(c(1:6, 8:12, 14, 15, 20, 23))], auc=TRUE, retfun=identity)))
-mean(apply(acc.cv.10, 1, mean))
-mean(apply(acc.cv.10, 1, sd))
-
-acc.cv.11 <- t(sapply(1:100, function(i) analyseVariablesWithCrossValidation(dummyXY, dummyNames[ findIndices(c(1:6, 8:12, 14, 15, 20, 25))], auc=TRUE, retfun=identity)))
-mean(apply(acc.cv.11, 1, mean))
-mean(apply(acc.cv.11, 1, sd))
-
-acc.cv.12 <- t(sapply(1:100, function(i) analyseVariablesWithCrossValidation(dummyXY, dummyNames[ findIndices(c(1:6, 8:15,  25))], auc=TRUE, retfun=identity)))
-mean(apply(acc.cv.12, 1, mean))
-mean(apply(acc.cv.12, 1, sd))
-
-acc.cv.13 <- t(sapply(1:100, function(i) analyseVariablesWithCrossValidation(dummyXY, dummyNames[ findIndices(c(1:6, 8:12, 14:15, 23, 25))], auc=TRUE, retfun=identity)))
-mean(apply(acc.cv.13, 1, mean))
-mean(apply(acc.cv.13, 1, sd))
-
-acc.cv.14 <- t(sapply(1:100, function(i) analyseVariablesWithCrossValidation(dummyXY, dummyNames[ findIndices(c(1:15, 25))], auc=TRUE, retfun=identity)))
-mean(apply(acc.cv.14, 1, mean))
-mean(apply(acc.cv.14, 1, sd))
-
-acc.cv.15 <- t(sapply(1:100, function(i) analyseVariablesWithCrossValidation(dummyXY, dummyNames[ findIndices(c(1:15, 25, 37))], auc=TRUE, retfun=identity)))
-mean(apply(acc.cv.15, 1, mean))
-mean(apply(acc.cv.15, 1, sd))
-
-acc.cv.16 <- t(sapply(1:100, function(i) analyseVariablesWithCrossValidation(dummyXY, dummyNames[ findIndices(c(1:6, 8:15, 25, 37))], auc=TRUE, retfun=identity)))
-mean(apply(acc.cv.16, 1, mean))
-mean(apply(acc.cv.16, 1, sd))
-```
 
 
 
@@ -524,7 +475,7 @@ for(i in 1:20){
   modelsConsidered <- append(modelsConsidered, list(model))
 }
 
-auc.fwd <- append(auc.fwd, lapply(modelsConsidered[22:31], function(model) t(sapply(1:10, function(r) analyseVariablesWithCrossValidation(dummyXY, dummyNames[findIndices(c(model))], auc=TRUE, retfun=identity)))))
+auc.fwd <- append(auc.fwd, lapply(modelsConsidered[32:51], function(model) t(sapply(1:10, function(r) analyseVariablesWithCrossValidation(dummyXY, dummyNames[findIndices(c(model))], auc=TRUE, retfun=identity)))))
 
 ```
 
@@ -575,73 +526,35 @@ cv.out <- cv.glmnet(X.train, Y.train, alpha=1)
 plot(cv.out)
 bestlam <- cv.out$lambda.min
 lasso.mod <- glmnet(X.train, Y.train, family="binomial", alpha=1, lambda=grid)
-lasso.pred <- predict(lasso.mod, type="response", s=bestlam, newx=X.test)
+lasso.pred <- predict(lasso.mod, s=bestlam, type="response", newx=X.test)
 performance(prediction(lasso.pred, Y.test), "auc")@y.values[[1]]
 
-cofs <- predict(lasso.mod, type="coefficients", s=bestlam)
+cofs <- predict(lasso.mod.all, type="coefficients", s=bestlam.all)
 nzDNs <- rownames(cofs)[cofs[,1] != 0]
 lassoVars <- (1:102)[sapply(1:102, function(i) length(intersect(dummyNames[findIndices(i)], nzDNs)) > 0 )]
 setdiff(mvars, lassoVars)
 
-#lasso model, on all vars
-X <- as.matrix(dummyXY[,-311])
-Y <- dummyXY$Y
-lasso.mod <- glmnet(X, Y, family="binomial", alpha=1, lambda=grid)
-lasso.pred <- predict(lasso.mod, type="response", s=bestlam, newx=X.test)
-performance(prediction(lasso.pred, Y.test), "auc")@y.values[[1]]
-lasso.pred.sub <- predict(lasso.mod, type="response", s=bestlam, newx=subX)
 
-cofs <- predict(lasso.mod, type="coefficients", s=bestlam)
-nzDNs <- rownames(cofs)[cofs[,1] != 0]
-lassoVars <- (1:102)[sapply(1:102, function(i) length(intersect(dummyNames[findIndices(i)], nzDNs)) > 0 )]
-setdiff(mvars, lassoVars)`
+cv.out <- cv.glmnet(X, Y, alpha=1)
+plot(cv.out)
+bestlam.all <- cv.out$lambda.min
+lasso.mod.all <- glmnet(X, Y, family="binomial", alpha=1, lambda=grid)
+lasso.mod.all.pred <- predict(lasso.mod.all, s=bestlam.all, type="response", newx = subX)
 
-trynewvarinlasso <- function(i){
-  mvars <- c(model[1:30], i)
-  X <- as.matrix(dummyXY[, dummyNames[findIndices(mvars)]])
-  X <- as.matrix(dummyXY[, -311])
-  Y <- dummyXY$Y
-  X.train <- subset(X, split==TRUE)
-  Y.train <- subset(Y, split==TRUE)
-  X.test <- subset(X, split==FALSE)
-  Y.test <- subset(Y, split==FALSE)
-  cv.out <- cv.glmnet(X.train, Y.train, alpha=1)
-  plot(cv.out)
-  bestlam <- cv.out$lambda.min
-  ridge.mod <- glmnet(X.train, Y.train, family="binomial", alpha=1, lambda=grid)
-  ridge.pred <- predict(ridge.mod, type="response",s=bestlam, newx=X.test)
-  acc <- performance(prediction(ridge.pred, Y.test), "auc")@y.values[[1]]
-  
-  cofs <- predict(ridge.mod, type="coefficients", s=bestlam)
-  nzDNs <- rownames(cofs)[cofs[,1] != 0]
-  lassoVars <- (1:102)[sapply(1:102, function(i) length(intersect(dummyNames[findIndices(i)], nzDNs)) > 0 )]
-  list(acc=acc, badVars=setdiff(mvars, lassoVars))
-}
+hhs <- findIndices("HouseholdStatus")
+lasso.mod.nohhs <- glmnet(X[, -hhs], Y, family="binomial", alpha=1, lambda=grid)
+cv.out <- cv.glmnet(X[,-hhs], Y, alpha=1)
+plot(cv.out)
+bestlam.nohhs <- cv.out$lambda.min
+lasso.mod.nohhs.pred <- predict( lasso.mod.nohhs, s=bestlam.nohhs, type="response", newx=subX[,-hhs])
 
-lassoCV <- function(X, Y, bestlam, withLam=FALSE, retfun=identity, auc=TRUE){
-  N <- nrow(X)
-  rindexShuffled <- sample(1:N, N, replace=FALSE)
-  cvistop <- (1:4)*floor(N/5)
-  cvistart <- c(1, cvistop+1)
-  cvistop <- c(cvistop, N)
-  retfun(sapply(1:5, function(k) {
-      testidx <- rindexShuffled[cvistart[k]:cvistop[k]]
-      X.test <- X[ testidx, ]
-      X.train <- X[-testidx, ]
-      Y.train <- Y[-testidx]
-      Y.test <- Y[testidx]
-#      cv.out <- cv.glmnet(X.train, Y.train, alpha=1)
-      #bestlam <- cv.out$lambda.min
-      lasso.model <- glmnet(X.train, Y.train, family="binomial", alpha=1, lambda=grid)
-      lasso.pred <- predict(lasso.model, s=bestlam, newx=X.test, type="response")
-      if(withLam){
-        if(!auc) list(lam=bestlam, acc=tabacc( table(Y.test, lasso.pred > 0.5)))
-        else list(lam=bestlam, auc=performance(prediction(lasso.pred, Y.test), "auc")@y.values[[1]])
-      }
-      else{
-        if(!auc) acc=tabacc( table(Y.test, lasso.pred > 0.5))
-        else auc=performance(prediction(lasso.pred, Y.test), "auc")@y.values[[1]]
-      }
-    })
-  )  
-}
+dummies <- dummyVars(Happy ~ ., data=compData[, c(svord, "Happy")])
+X <- predict(dummies, compData)
+dummies <- dummyVars(~ ., data=compDataSubmit[, svord])
+subX <- predict(dummies, compDataSubmit)
+cv.out <- cv.glmnet(X, Y, alpha=1)
+plot(cv.out)
+bestlam.all <- cv.out$lambda.min
+lasso.mod.all <- glmnet(X, Y, family="binomial", alpha=1, lambda=grid)
+lasso.mod.all.pred <- predict(lasso.mod.all, s=bestlam.all, type="response", newx = subX)
+submission(compDataSubmit$UserID, lasso.mod.all.pred, "submissionCaretDummiesGlmnetLassoSvord.csv")

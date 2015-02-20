@@ -1,0 +1,9 @@
+*.xlsx
+*.csv
+*.ods
+*.swp
+*.ods
+*.ods#
+.Rhistory
+.Rapp.history
+*.RData

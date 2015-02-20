@@ -1,0 +1,31 @@
+---
+title: "finalElantra"
+output: html_document
+---
+```{r}
+setwd("~/work/learn/analyticsEdge/final/")
+elantra <- read.csv("elantra.csv")
+train <- subset(elantra, Year <= 2012)
+test <- subset(elantra, Year == 2013 | Year == 2014)
+nrow(train)
+lm.elantra <- lm(ElantraSales ~ Unemployment + CPI_all + CPI_energy + Queries , data=train)
+summary(lm.elantra)
+lm2.elantra <- lm(ElantraSales ~ Month + Unemployment + CPI_all + CPI_energy + Queries , data=train)
+summary(lm2.elantra)
+```
+```{r monthasfactor}
+elantra <- read.csv("elantra.csv")
+elantra$Month <- as.factor(elantra$Month)
+train <- subset(elantra, Year <= 2012)
+test <- subset(elantra, Year == 2013 | Year == 2014)
+nrow(train)
+lm.elantra <- lm(ElantraSales ~ Unemployment + CPI_all + CPI_energy + Queries , data=train)
+summary(lm.elantra)
+lm2.elantra <- lm(ElantraSales ~ Month + Unemployment + CPI_all + CPI_energy + Queries , data=train)
+summary(lm2.elantra)
+```
+```{r reducedModels}
+lm3.elantra <- lm(ElantraSales ~ Month + Unemployment + CPI_all + CPI_energy , data=train)
+summary(lm3.elantra)
+pred.elantra <- predict(lm3.elantra, newdata=test)
+baseline <- mean(train$ElantraSales)

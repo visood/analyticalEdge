@@ -1,0 +1,42 @@
+Title Sales Reps
+========================================================
+example
+```{r data}
+N <- t(read.csv2("pfizer/currentAssignments.csv")[, -1])
+D <- t(read.csv2("pfizer/distanceToOffice.csv")[, -1])
+I <- read.csv2("pfizer/indexValuesOfBricks.csv")[,-1]
+R <- nrow(N)
+B <- ncol(N)
+```
+```{r example}
+library(lpSolveAPI)
+lpm <- make.lp( B + 3*R, R*B)
+#1 exactly1R
+exactly1RIndices <- lapply(1:B, function(j) {1:R + R*(j-1)})
+exactly1RValues <- lapply(1:B, function(j) rep(1, R))
+#2 balance
+balanceIndices <- lapply(1:R, function(i) {i + (1:B -1)*R })
+balanceValues <- lapply(1:R, function(i) I)
+#3 disruption
+disruptionIndices <- lapply(1:R, function(i) {i + (1:B -1)*R })
+disruptionValues <- lapply(1:R, function(i) N[i,])
+
+constrainIndices <- c( exactly1RIndices, balanceIndices, balanceIndices, disruptionIndices)
+constrainValues <- c(exactly1RValues, balanceValues, balanceValues, disruptionValues)
+
+constrainMat <- matrix(0, nrow=B + 3*R, ncol=R*B)
+for( i in 1:(B + 3*R))  constrainMat[i, constrainIndices[[i]]] <- constrainValues[[i]]
+
+distance <- as.vector(D)
+  
+for(j in 1:(B*R)) set.column(lpm, j, constrainMat[, j])
+set.objfn(lpm, distance)
+set.constr.type(lpm, c(rep("=", B), rep(">=", R), rep("<=", R), rep("<=", R)))
+set.rhs(lpm, c(rep(1, B), rep(0.9, R), rep(1.1, R), rep(3, R) ))
+lp.control(lpm, sense="min")
+for(i in 1:(B*R)) set.type(lpm, i, "binary")
+
+write.lp(lpm, 'pfizer/pfizer.lp', type='lp')
+solve(lpm)
+get.objective(lpm)
+```

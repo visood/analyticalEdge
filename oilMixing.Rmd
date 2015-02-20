@@ -1,0 +1,14 @@
+---
+title: "oil mixing"
+output: html_document
+---
+linear programming in R
+```{r}
+prodStandard <- data.frame(octane=c(10, 8,6), iron=c(1,2,1))
+rownames(prodStandard) <- c("SG", "RG", "DF")
+crudeValues <- data.frame(octane=c(12, 6, 8), iron=c(0.5, 2.0, 3.0))
+rownames(crudeValues) <- c("1", "2", "3")
+salePrice <- data.frame(SP = c(70, 60, 50))
+rownames(salePrice) <-  c("SG", "RG", "DF")
+purchasePrice <- data.frame(PP = c(45, 35, 25))
+rownames(purchasePrice) <- c("1", "2", "3")

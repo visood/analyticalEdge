@@ -36,6 +36,7 @@ ggplot(predMap, aes(x=long, y=lat, group=group, fill=testPred)) +
 ##Paroles
 
 ```{r parole}
+setwd("~/work/learn/analyticsEdge/")
 parole <- read.csv("data/parole.csv")
 parole$male <- as.factor(parole$male)
 parole$state <- as.factor(parole$state)

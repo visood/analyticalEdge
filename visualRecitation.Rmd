@@ -4,7 +4,7 @@ output: html_document
 ---
 ```{r}
 library(ggplot2)
-intl <- read.csv("data/intl.csv")
+intl <- read.csv("~/work/learn/analyticsEdge/data/intl.csv")
 intl <- transform(intl, Region=reorder(Region, -PercentOfIntl))
 str(intl)
 intl$PercentOfIntl <- 100*intl$PercentOfIntl

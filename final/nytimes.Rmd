@@ -1,0 +1,14 @@
+---
+title: "nytimes"
+output: html_document
+---
+```{r data}
+nytimes <- read.csv("nytimes.csv", stringsAsFactors=FALSE)
+nytimes$popular <- as.factor(nytimes$popular)
+nytimes$type <- as.factor(nytimes$type)
+set.seed(144)
+library(caTools)
+spl <- sample.split(nytimes$popular, SplitRatio = 0.7)
+train <- subset(nytimes, spl==TRUE)
+test <- subset(nytimes, spl==FALSE)
+glm.nytimes <- glm(popular)
